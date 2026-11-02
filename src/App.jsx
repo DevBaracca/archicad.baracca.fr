@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 /* =================================================================
    Catalogues par défaut — repli si l'API du site est indisponible.
@@ -273,10 +273,12 @@ const surfaceToiture = (d, tt) =>
   surfaceToitureDm({ longueur: d.longueur, largeur: d.largeur }, pente1Of(d), pente2Of(d), tt);
 const hauteurFaitage = (d, tt) =>
   hauteurFaitageDm({ longueur: d.longueur, largeur: d.largeur }, pente1Of(d), pente2Of(d), tt);
-// cumul de la surface de toiture sur toutes les instances
+// cumul de la surface de toiture sur toutes les instances = somme des aires
+// des pents (pentsOf) : identique au chiffrage estimatif, débords de rive
+// compris — ainsi « Réglages généraux », le chiffrage et l'export JSON affichent
+// la même surface, y compris en deux pentes asymétriques
 const surfaceToitureTotale = (d, env, tt) =>
-  (d.instances?.length ? d.instances : [{ moduleId: d.moduleId }])
-    .reduce((s, i) => s + surfaceToitureDm(dimsOf(d, env, i), pente1Of(d), pente2Of(d), tt), 0);
+  pentsOf(d, env).reduce((s, p) => s + p.area, 0);
 
 const murLongueurDm = (dm, face) =>
   face === "nord" || face === "sud" ? dm.longueur : dm.largeur;
@@ -326,6 +328,13 @@ const rgbHex = (rgb) =>
   "#" + (Array.isArray(rgb) ? rgb : [158, 158, 158])
     .map((v) => Math.max(0, Math.min(255, Math.round(+v || 0))).toString(16).padStart(2, "0"))
     .join("");
+// mélange deux couleurs hexa (t = 0 -> c1, t = 1 -> c2) — utilisé pour griser
+// les segments profonds des élévations
+const mixHex = (c1, c2, t) => {
+  const p = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  const a = p(c1), b = p(c2);
+  return "#" + a.map((v, i) => Math.round(v + (b[i] - v) * Math.max(0, Math.min(1, t))).toString(16).padStart(2, "0")).join("");
+};
 
 function tarifOuverture(o, menuiseries) {
   if (!menuiseries) return 0;
@@ -618,8 +627,8 @@ function pentParts(d, inst, dimsOf, pents, toitType, x, y, L, l) {
 /* =================================================================
    Plan SVG (vue de dessus)
 ================================================================= */
-function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf, pents, selPent, onSelectFace, onSelectPent, onAddSide, onRemoveInst }) {
-  const W = 560, H = 400, margin = 64;
+function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf, pents, selPent, onSelectFace, onSelectPent, onAddSide, onRemoveInst, w, h, zoom }) {
+  const W = w ?? 560, H = h ?? 400, margin = 64;
   const murDef = murs.find((m) => m.id === d.murType) || murs[0];
   // Modules placés côte à côte : positions absolues (x, y en mètres) ; chaque
   // instance a son propre modèle (donc ses longueur/largeur). Ligne directrice
@@ -676,10 +685,10 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
   };
   const sideBtn = (inst, side) => {
     const x = X(inst.x), y = Y(inst.y), L = Lof(inst), l = lof(inst);
-    if (side === "nord") return [x + L * 0.68, y - ep - 13];
-    if (side === "sud") return [x + L * 0.68, y + l + ep + 13];
-    if (side === "ouest") return [x - ep - 13, y + l * 0.68];
-    return [x + L + ep + 13, y + l * 0.68];
+    if (side === "nord") return [x + L * 0.5, y - ep - 40];
+    if (side === "sud") return [x + L * 0.5, y + l + ep + 40];
+    if (side === "ouest") return [x - ep - 40, y + l * 0.5];
+    return [x + L + ep + 40, y + l * 0.5];
   };
   // Angles aux jonctions : on rallonge une extrémité d'une épaisseur là où aucun
   // mur perpendiculaire ne remplit le coin (coins extérieurs et jonctions en T)
@@ -698,9 +707,8 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
       if (!rects.some((o) => o !== r && o.horiz && intersects(sqB, o))) { r.h += ep; }
     }
   }
-  const dim = ep + 30;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ width: W * (zoom ?? 1), height: H * (zoom ?? 1) }}>
       <defs>
         <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse">
           <path d="M0 6 L6 0" stroke="#c8b8a5" strokeWidth="1" />
@@ -787,34 +795,40 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
           </g>
         );
       })}
-      {/* boutons + sur chaque côté libre (choix du modèle), et − pour supprimer un module */}
-      {onAddSide && insts.map((inst) =>
-        FACES.map((f) => {
-          const [dc, dr] = { nord: [0, -1], sud: [0, 1], est: [1, 0], ouest: [-1, 0] }[f.key];
-          if (neighborAt(inst, f.key)) return null;
-          const [cx, cy] = sideBtn(inst, f.key);
-          return (
-            <g key={`${inst.id}-${f.key}`} onClick={() => onAddSide(inst.id, f.key)}
-              style={{ cursor: "pointer" }} title={`Ajouter un module au côté ${f.key} (choisir le modèle)`}>
-              <circle cx={cx} cy={cy} r="10" fill="#fff" stroke="#b45309" strokeWidth="1.5" />
-              <text x={cx} y={cy + 3.5} textAnchor="middle" fontSize="13" fontWeight="700" fill="#b45309">+</text>
-            </g>
-          );
-        })
-      )}
+      {/* boutons + sur chaque côté libre (choix du modèle) ; quand deux côtés
+          libres se rejoignent au même endroit (modules en L), un seul + est
+          affiché (les doublons de position sont filtrés) */}
+      {onAddSide && (() => {
+        const btns = [];
+        insts.forEach((inst) => {
+          FACES.forEach((f) => {
+            if (neighborAt(inst, f.key)) return;
+            const [cx, cy] = sideBtn(inst, f.key);
+            if (btns.some((b) => Math.hypot(b.cx - cx, b.cy - cy) < 26)) return;
+            btns.push({ inst, side: f.key, cx, cy });
+          });
+        });
+        return btns.map((b) => (
+          <g key={`${b.inst.id}-${b.side}`} onClick={() => onAddSide(b.inst.id, b.side)}
+            style={{ cursor: "pointer" }} title={`Ajouter un module au côté ${b.side} (choisir le modèle)`}>
+            <circle cx={b.cx} cy={b.cy} r="10" fill="#2563eb" />
+            <path d={`M ${b.cx - 4.5} ${b.cy} H ${b.cx + 4.5} M ${b.cx} ${b.cy - 4.5} V ${b.cy + 4.5}`} stroke="#fff" strokeWidth="2.2" strokeLinecap="round" fill="none" />
+          </g>
+        ));
+      })()}
       {onRemoveInst && insts.length > 1 && insts.map((inst) => (
         <g key={`rm-${inst.id}`} onClick={() => onRemoveInst(inst.id)}
           style={{ cursor: "pointer" }} title={`Supprimer le module ${inst.id}`}>
-          <circle cx={X(inst.x) + Lof(inst) - 11} cy={Y(inst.y) + 11} r="9" fill="#fff" stroke="#b91c1c" strokeWidth="1.5" />
-          <text x={X(inst.x) + Lof(inst) - 11} y={Y(inst.y) + 14.5} textAnchor="middle" fontSize="12" fontWeight="700" fill="#b91c1c">−</text>
+          <circle cx={X(inst.x) + Lof(inst) - 30} cy={Y(inst.y) + 30} r="9" fill="#dc2626" />
+          <path d={`M ${X(inst.x) + Lof(inst) - 34} ${Y(inst.y) + 26} L ${X(inst.x) + Lof(inst) - 26} ${Y(inst.y) + 34} M ${X(inst.x) + Lof(inst) - 26} ${Y(inst.y) + 26} L ${X(inst.x) + Lof(inst) - 34} ${Y(inst.y) + 34}`} stroke="#fff" strokeWidth="2" strokeLinecap="round" fill="none" />
         </g>
       ))}
-      {/* cotes globales (cumul des modules) */}
-      <line x1={X(b.minX)} y1={Y(b.maxY) + ep + 10} x2={X(b.maxX)} y2={Y(b.maxY) + ep + 10} stroke="#a8a29e" strokeDasharray="4 3" />
-      <text x={gx + sumColW / 2} y={Y(b.maxY) + ep + 24} textAnchor="middle" fill="#78716c" fontSize="10">{fmtCm(cumul.longueur)} cm</text>
-      <line x1={X(b.minX) - dim} y1={Y(b.minY)} x2={X(b.minX) - dim} y2={Y(b.minY) + sumRowH} stroke="#a8a29e" strokeDasharray="4 3" />
-      <text x={X(b.minX) - dim - 4} y={gy + sumRowH / 2} textAnchor="middle" fill="#78716c" fontSize="10"
-        transform={`rotate(-90 ${X(b.minX) - dim - 4} ${gy + sumRowH / 2})`}>{fmtCm(cumul.largeur)} cm</text>
+      {/* cotes globales (cumul des modules), dessinées à l'intérieur du module */}
+      <line x1={X(b.minX)} y1={Y(b.minY) + 12} x2={X(b.maxX)} y2={Y(b.minY) + 12} stroke="#a8a29e" strokeDasharray="4 3" />
+      <text x={gx + sumColW / 2} y={Y(b.minY) + 26} textAnchor="middle" fill="#78716c" fontSize="10">{fmtCm(cumul.longueur)} cm</text>
+      <line x1={X(b.maxX) - 12} y1={Y(b.minY)} x2={X(b.maxX) - 12} y2={Y(b.minY) + sumRowH} stroke="#a8a29e" strokeDasharray="4 3" />
+      <text x={X(b.maxX) - 26} y={gy + sumRowH / 2} textAnchor="middle" fill="#78716c" fontSize="10"
+        transform={`rotate(-90 ${X(b.maxX) - 26} ${gy + sumRowH / 2})`}>{fmtCm(cumul.largeur)} cm</text>
     </svg>
   );
 }
@@ -822,120 +836,137 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
 /* =================================================================
    Élévation SVG (façade sud)
 ================================================================= */
-function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, faceData, dims }) {
-  dims = dims || { longueur: d.longueur, largeur: d.largeur, hauteur: d.hauteur };
-  const W = 560, H = 320, margin = 60;
+function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, faceData, dims, w, h, insts, bbox }) {
+  const W = w ?? 560, H = h ?? 320, margin = 60;
   const horiz = faceKey === "nord" || faceKey === "sud";
-  const Lm = horiz ? dims.longueur : dims.largeur;
-  const face = faceData || { actif: true, ouvertures: [], surface: null };
+  // Un segment par module : l'élévation est une vraie projection de la façade,
+  // chaque module étant placé à sa position le long de l'axe de la face.
+  const segs = (insts && insts.length ? insts : [{
+    inst: null,
+    dm: dims || { longueur: d.longueur, largeur: d.largeur, hauteur: d.hauteur },
+    face: faceData || { actif: true, ouvertures: [], surface: null },
+    depth: 0,
+  }]);
+  // longueur projetée de la façade = span de l'axe (bbox), pas la somme des modules
+  const bb = bbox || (horiz
+    ? { minX: 0, maxX: dims?.longueur ?? d.longueur, minY: 0, maxY: dims?.largeur ?? d.largeur }
+    : { minY: 0, maxY: dims?.largeur ?? d.largeur, minX: 0, maxX: dims?.longueur ?? d.longueur });
+  const axisMin = horiz ? bb.minX : bb.minY;
+  const Lm = horiz ? bb.maxX - bb.minX : bb.maxY - bb.minY;
+  const hMax = Math.max(...segs.map((x) => x.dm.hauteur));
   const murDef = murs.find((m) => m.id === d.murType) || murs[0];
   const epP = epaisseurPlancher(d, planchers);
   const epToit = +(toiture.epaisseur ?? 0.30);   // épaisseur de la toiture (m)
   const toitRgb = toiture.rgb || [120, 113, 108];
-  const surfaceDef = surfaces.find((s) => s.id === (face.surface ?? murDef.surface)) || surfaces[0];
-  // Échelle UNIQUE en horizontal et en vertical (les proportions largeur /
-  // hauteur sont conservées), en réservant la place de la toiture, du
+  const hFmax = Math.max(...segs.map((x) => hauteurFaitageDm(x.dm, pente1Of(d), pente2Of(d), toitType)));
+  // Échelle UNIQUE en horizontal et en vertical, sur toute la façade (les
+  // proportions sont conservées), en réservant la place de la toiture, du
   // plancher et du sol. Ligne directrice des murs à l'intérieur : la façade
-  // dessinée s'étend de l'épaisseur du mur au-delà de la ligne directrice,
-  // de chaque côté (une menuiserie à 7,8 cm de la ligne directrice apparaît
-  // donc à 7,8 cm + épaisseur du mur du bord extérieur de l'élévation).
+  // dessinée s'étend de l'épaisseur du mur au-delà de la ligne directrice.
   const scale = Math.min(
     (W - 2 * margin) / (Lm + 2 * murDef.epaisseur),
-    (H - 2 * margin) / Math.max(dims.hauteur + hauteurFaitageDm(dims, pente1Of(d), pente2Of(d), toitType) + epToit + epP + SOL_SOUS_PLANCHER, 3)
+    (H - 2 * margin) / Math.max(hMax + hFmax + epToit + epP + SOL_SOUS_PLANCHER, 3)
   );
   const epPx = murDef.epaisseur * scale;
   const epPxP = epP * scale;                      // épaisseur du plancher en px
   const epToitPx = epToit * scale;                // épaisseur de la toiture en px
   const depPx = PLANCHER_DEPASSEMENT * scale;     // dépassement du plancher / ligne directrice des murs
   const L = Lm * scale;
-  const hM = dims.hauteur * scale, hF = hauteurFaitageDm(dims, pente1Of(d), pente2Of(d), toitType) * scale;
   const x0 = (W - L) / 2;
   const ySol = H - margin;                                     // trait du sol
   const yPlancher = ySol - SOL_SOUS_PLANCHER * scale - epPxP;  // ligne directrice du plancher = bas des murs
-  const yTop = yPlancher - hM;                                 // ligne directrice de la toiture (bas de la toiture)
   const nom = FACES.find((f) => f.key === faceKey).label;
-  // Vue extérieure : miroir vu du NORD (regard vers le sud : l'ouest
-  // apparaît à droite) et vu de l'EST (regard vers l'ouest : le sud
-  // apparaît à droite, or les positions sont mesurées depuis le coin sud).
-  // Pas de miroir pour sud et ouest.
+  // Vue extérieure : miroir vu du NORD et de l'EST (l'ordre des segments est
+  // déjà inversé côté App). Pas de miroir pour sud et ouest.
   const miroir = faceKey === "nord" || faceKey === "est";
-  const ox = (o) => x0 + (miroir ? L - (o.position + o.largeur) * scale : o.position * scale);
   const xa = x0 - epPx, xb = x0 + L + epPx;   // bords extérieurs de la façade
   const pa = x0 - depPx, pb = x0 + L + depPx; // bords du plancher (21,7 cm au-delà de la ligne directrice)
-  let toitPath, toitFill = "none", toitDash = null, vueCote = false;
-  if (toitType === "terrasse") {
-    toitPath = `M ${xa} ${yTop} L ${xb} ${yTop}`;
-  } else if (toitType === "monopente") {
-    if (horiz) {
-      toitPath = `M ${xa} ${yTop} L ${xb} ${yTop} M ${xa} ${yTop - hF} L ${xb} ${yTop - hF}`;
-      toitDash = "8 5"; vueCote = true;
-    } else {
-      // monopente (gouttière au sud, faitage au nord) :
-      // vu de l'OUEST (nord à gauche) -> haut à gauche ;
-      // vu de l'EST (nord à droite) -> haut à droite.
-      toitPath = faceKey === "ouest"
-        ? `M ${xa} ${yTop - hF} L ${xb} ${yTop}`
-        : `M ${xa} ${yTop} L ${xb} ${yTop - hF}`;
+  const surfaceOf = (face) => surfaces.find((s) => s.id === (face?.surface ?? murDef.surface)) || surfaces[0];
+  // path de toiture d'un segment
+  const toitOf = (x0s, Ls, yTop, hF, dm) => {
+    const xaS = x0s - epPx, xbS = x0s + Ls + epPx;
+    if (toitType === "terrasse") return { path: `M ${xaS} ${yTop} L ${xbS} ${yTop}`, fill: "none", dash: null, cote: false };
+    if (toitType === "monopente") {
+      if (horiz) return { path: `M ${xaS} ${yTop} L ${xbS} ${yTop} M ${xaS} ${yTop - hF} L ${xbS} ${yTop - hF}`, fill: "none", dash: "8 5", cote: true };
+      return { path: faceKey === "ouest" ? `M ${xaS} ${yTop - hF} L ${xbS} ${yTop}` : `M ${xaS} ${yTop} L ${xbS} ${yTop - hF}`, fill: "none", dash: null, cote: false };
     }
-  } else if (horiz && toitType === "quatrepentes") {
-    // élévation nord/sud en croupe : trapèze, faitage court entre les arêtiers
-    const rx1 = x0 + (dims.largeur / 2) * scale, rx2 = x0 + L - (dims.largeur / 2) * scale;
-    toitPath = `M ${xa} ${yTop} L ${rx1} ${yTop - hF} L ${rx2} ${yTop - hF} L ${xb} ${yTop}`;
-    toitFill = "rgba(180,83,9,0.15)";
-  } else if (horiz) {
-    // deux pentes, vue de côté (faitage sur toute la longueur)
-    toitPath = `M ${xa} ${yTop} L ${xb} ${yTop} M ${xa} ${yTop - hF} L ${xb} ${yTop - hF}`;
-    toitDash = "8 5"; vueCote = true;
-  } else {
-    // est/ouest : pan triangulaire (pignon deux pentes, ou pan de croupe) ;
-    // deux pentes asymétriques : le faitage est décalé (avancée horizontale du
-    // versant 1 depuis le nord) — et l'élévation EST est le miroir de l'OUEST,
-    // comme pour la monopente
+    if (horiz && toitType === "quatrepentes") {
+      const rx1 = x0s + (dm.largeur / 2) * scale, rx2 = x0s + Ls - (dm.largeur / 2) * scale;
+      return { path: `M ${xaS} ${yTop} L ${rx1} ${yTop - hF} L ${rx2} ${yTop - hF} L ${xbS} ${yTop}`, fill: "rgba(180,83,9,0.15)", dash: null, cote: false };
+    }
+    if (horiz) return { path: `M ${xaS} ${yTop} L ${xbS} ${yTop} M ${xaS} ${yTop - hF} L ${xbS} ${yTop - hF}`, fill: "none", dash: "8 5", cote: true };
+    // est/ouest : pan triangulaire (pignon deux pentes, ou pan de croupe)
     const t1 = Math.tan((pente1Of(d) * Math.PI) / 180);
-    const hFm = hauteurFaitageDm(dims, pente1Of(d), pente2Of(d), toitType);
-    const run1 = t1 > 0 ? Math.min(Math.max(hFm / t1, 0), dims.largeur) : dims.largeur / 2;
-    const apexX = miroir ? x0 + L - run1 * scale : x0 + run1 * scale;
-    toitPath = `M ${xa} ${yTop} L ${apexX} ${yTop - hF} L ${xb} ${yTop} Z`;
-    toitFill = "rgba(180,83,9,0.15)";
-  }
+    const hFm = hauteurFaitageDm(dm, pente1Of(d), pente2Of(d), toitType);
+    const run1 = t1 > 0 ? Math.min(Math.max(hFm / t1, 0), dm.largeur) : dm.largeur / 2;
+    const apexX = miroir ? x0s + Ls - run1 * scale : x0s + run1 * scale;
+    return { path: `M ${xaS} ${yTop} L ${apexX} ${yTop - hF} L ${xbS} ${yTop} Z`, fill: "rgba(180,83,9,0.15)", dash: null, cote: false };
+  };
+  // segments projetés à leur vraie position le long de la façade (miroir pour
+  // nord/est), puis triés du plus profond au plus proche : le module le plus
+  // proche de la face recouvre ceux en retrait (occlusion)
+  const placed = segs.map((s) => {
+    const pos = horiz ? (s.inst?.x ?? 0) : (s.inst?.y ?? 0);
+    const lenM = horiz ? s.dm.longueur : s.dm.largeur;
+    const hM = s.dm.hauteur * scale;
+    const hF = hauteurFaitageDm(s.dm, pente1Of(d), pente2Of(d), toitType) * scale;
+    let x0s = x0 + (pos - axisMin) * scale;
+    if (miroir) x0s = x0 + (Lm - (pos - axisMin) - lenM) * scale;
+    const Ls = lenM * scale;
+    return { ...s, x0s, Ls, hM, hF, yTop: yPlancher - hM, toit: toitOf(x0s, Ls, yPlancher - hM, hF, s.dm) };
+  });
+  placed.sort((a, c) => (c.depth ?? 0) - (a.depth ?? 0));
+  // profondeur relative (0 = le plus proche de la face) pour griser les segments au fond
+  const maxDepth = Math.max(0, ...placed.map((s) => s.depth ?? 0));
+  const ox = (o, seg) => seg.x0s + (miroir ? seg.Ls - (o.position + o.largeur) * scale : o.position * scale);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ width: "100%", height: "100%" }}>
       <line x1={20} y1={ySol} x2={W - 20} y2={ySol} stroke="#a8a29e" strokeWidth="2" />
-      {/* plancher : ligne directrice en haut (point bas des murs), épaisseur vers le bas,
+      {/* plancher continu : ligne directrice en haut (bas des murs), épaisseur vers le bas,
           bords à 21,7 cm au-delà de la ligne directrice des murs */}
       <rect x={pa} y={yPlancher} width={L + 2 * depPx} height={epPxP}
         fill="#e7e5e4" stroke="#78716c" />
       <line x1={pa} y1={yPlancher} x2={pb} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
       <defs>
-        {surfaceDef?.image && (
-          <pattern id="murSurf" patternUnits="userSpaceOnUse" x={xa} y={yTop} width={L + 2 * epPx} height={hM}>
-            <image href={surfaceDef.image} x={xa} y={yTop} width={L + 2 * epPx} height={hM} preserveAspectRatio="xMidYMid slice" />
-          </pattern>
-        )}
+        {placed.map((seg, i) => {
+          const sd = surfaceOf(seg.face);
+          return sd?.image ? (
+            <pattern key={i} id={`murSurf-${i}`} patternUnits="userSpaceOnUse" x={seg.x0s - epPx} y={seg.yTop} width={seg.Ls + 2 * epPx} height={seg.hM}>
+              <image href={sd.image} x={seg.x0s - epPx} y={seg.yTop} width={seg.Ls + 2 * epPx} height={seg.hM} preserveAspectRatio="xMidYMid slice" />
+            </pattern>
+          ) : null;
+        })}
       </defs>
-      <rect x={xa} y={yTop} width={L + 2 * epPx} height={hM}
-        fill={surfaceDef?.image ? "url(#murSurf)" : rgbHex(murDef.rgb)} opacity="0.85" stroke="#78716c" />
-      {/* ligne directrice des murs (intérieure), à l'épaisseur du mur du bord extérieur */}
-      <line x1={x0} y1={yTop} x2={x0} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
-      <line x1={x0 + L} y1={yTop} x2={x0 + L} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
-      {face.actif && face.ouvertures.map((o, i) => (
-        <rect key={i} x={ox(o)} y={yPlancher - o.hauteur * scale}
-          width={o.largeur * scale} height={o.hauteur * scale}
-          fill={o.type === "porte" ? "#7c2d12" : "#0284c7"} opacity="0.85" rx="2" />
-      ))}
-      {/* toiture : bande d'épaisseur epToitPx AU-DESSUS de sa ligne directrice (en bas, yTop) */}
-      <g transform={`translate(0 ${-epToitPx / 2})`}>
-        <path d={toitPath} stroke={rgbHex(toitRgb)} strokeWidth={Math.max(epToitPx, 3)} fill={toitFill} strokeDasharray={toitDash} strokeLinejoin="round" />
-      </g>
-      {!face.actif && (
-        <text x={x0 + L / 2} y={yTop + hM / 2} textAnchor="middle" fill="#a8a29e" fontSize="11">Charpente (pas de mur)</text>
-      )}
-      <text x={x0 + L / 2} y={yTop - hF - 12} textAnchor="middle" fill="#78716c" fontSize="11">
+      {placed.map((seg, i) => {
+        const sd = surfaceOf(seg.face);
+        const t = maxDepth ? (seg.depth ?? 0) / maxDepth : 0; // 0 = devant, 1 = fond
+        return (
+          <g key={seg.inst?.id || i} opacity={1 - 0.4 * t}>
+            {/* mur du segment (ligne directrice intérieure, épaisseur vers l'extérieur) ;
+                grisé selon la profondeur pour accentuer l'effet de profondeur */}
+            <rect x={seg.x0s - epPx} y={seg.yTop} width={seg.Ls + 2 * epPx} height={seg.hM}
+              fill={sd?.image ? `url(#murSurf-${i})` : mixHex(rgbHex(murDef.rgb), "#a8a29e", 0.7 * t)} opacity="0.85" stroke="#78716c" />
+            <line x1={seg.x0s} y1={seg.yTop} x2={seg.x0s} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
+            <line x1={seg.x0s + seg.Ls} y1={seg.yTop} x2={seg.x0s + seg.Ls} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
+            {seg.face?.actif && seg.face.ouvertures.map((o, j) => (
+              <rect key={j} x={ox(o, seg)} y={yPlancher - o.hauteur * scale}
+                width={o.largeur * scale} height={o.hauteur * scale}
+                fill={o.type === "porte" ? "#7c2d12" : "#0284c7"} opacity="0.85" rx="2" />
+            ))}
+            {/* toiture du segment : bande d'épaisseur AU-DESSUS de sa ligne directrice (en bas) */}
+            <g transform={`translate(0 ${-epToitPx / 2})`}>
+              <path d={seg.toit.path} stroke={mixHex(rgbHex(toitRgb), "#a8a29e", 0.7 * t)} strokeWidth={Math.max(epToitPx, 3)} fill={seg.toit.fill} strokeDasharray={seg.toit.dash} strokeLinejoin="round" />
+            </g>
+            {!seg.face?.actif && (
+              <text x={seg.x0s + seg.Ls / 2} y={seg.yTop + seg.hM / 2} textAnchor="middle" fill="#a8a29e" fontSize="11">Charpente (pas de mur)</text>
+            )}
+          </g>
+        );
+      })}
+      <text x={x0 + L / 2} y={yPlancher - hMax * scale - hFmax * scale - 12} textAnchor="middle" fill="#78716c" fontSize="11">
         {toitType === "terrasse"
-          ? `${nom} — terrasse plate`
-          : vueCote
-            ? `${nom} — toiture vue de côté (faitage +${fmtCm(hauteurFaitageDm(dims, pente1Of(d), pente2Of(d), toitType))} cm)`
-            : `${nom} — ${toitType === "deuxpentes" ? "pignon" : "croupe"}, faitage +${fmtCm(hauteurFaitageDm(dims, pente1Of(d), pente2Of(d), toitType))} cm`}
+          ? `${nom} — terrasse plate (${segs.length} module${segs.length > 1 ? "s" : ""})`
+          : `${nom} — ${placed.some((s) => s.toit.cote) ? "toiture vue de côté" : toitType === "deuxpentes" ? "pignon" : "croupe"}, faitage +${fmtCm(hFmax)} cm (${segs.length} module${segs.length > 1 ? "s" : ""})`}
       </text>
     </svg>
   );
@@ -966,6 +997,9 @@ export default function App() {
   const [addPick, setAddPick] = useState(null); // { instId, side } : choix du modèle à ajouter via le + du plan
   const [chiffrageCardOpen, setChiffrageCardOpen] = useState(false); // carte Chiffrage réduite par défaut (bande grise seule)
   const [sauvOpen, setSauvOpen] = useState(false); // carte Sauvegardes fermée par défaut
+  const [reglagesOpen, setReglagesOpen] = useState(false); // conteneurs de la première ligne repliés au démarrage
+  const [soumettreOpen, setSoumettreOpen] = useState(false);
+  const [murOpen, setMurOpen] = useState(false); // pop-up Mur/Toiture : ouverte uniquement au clic sur le plan
   const [flash, setFlash] = useState("");
   const [caracOpen, setCaracOpen] = useState(false); // zone « Caractéristiques techniques » fermée par défaut
   const [chiffrageOpen, setChiffrageOpen] = useState(false); // détail par mur du chiffrage, fermé par défaut
@@ -973,6 +1007,109 @@ export default function App() {
   const [addOpen, setAddOpen] = useState(false);     // zone d'ajout d'un ouvrant (sous le +)
   const [addMenuiserieId, setAddMenuiserieId] = useState("");
   const [addError, setAddError] = useState("");
+
+  /* ----- Panneaux flottants de la zone principale (plan / élévation) -----
+     Les panneaux sont posés directement sur le fond de page (pas de carte) ;
+     on garde un conteneur par panneau pour pouvoir les déplacer (clic-glissé
+     sur la barre de titre) et les redimensionner (poignée en coin bas-droit). */
+  const stageRef = useRef(null);
+  const panelRefs = useRef({});
+  const dragMovedRef = useRef(false); // vrai si le dernier pointerdown était un déplacement
+  // Seuls le plan et l'élévation sont des panneaux flottants (dans le stage) ;
+  // les 4 conteneurs (réglages, chiffrage, sauvegardes, soumettre) sont fixés
+  // dans la colonne de droite. Par défaut : plan à 10 px du coin haut-gauche,
+  // élévation en dessous.
+  // w très grand au départ : plan et élévation démarrent en pleine largeur
+  // (clampés à stageW - 20 px dès que la largeur du stage est mesurée)
+  const [panels, setPanels] = useState({
+    plan: { x: 10, y: 10, w: 5000, h: 420 },
+    elev: { x: 10, y: 490, w: 5000, h: 340 },
+  });
+  const [zoom, setZoom] = useState(1); // zoom du plan (boutons + / −)
+  const [stageH, setStageH] = useState(900);
+  const [stageW, setStageW] = useState(0);
+  // Hauteur du stage = panneau le plus bas ; stageW mesuré à chaque rendu + au resize
+  useEffect(() => {
+    const w = stageRef.current?.clientWidth ?? 0;
+    if (w) setStageW(w);
+    let max = 0;
+    Object.values(panelRefs.current).forEach((el) => {
+      if (el) max = Math.max(max, el.offsetTop + el.offsetHeight);
+    });
+    setStageH(Math.max(max + 24, 320));
+    const onResize = () => {
+      const w2 = stageRef.current?.clientWidth ?? 0;
+      if (w2) setStageW(w2);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  });
+  // largeur effective d'un panneau : clampée à stageW - 20 (pleine largeur possible)
+  const effW = (key) => (stageW ? Math.min(panels[key].w, stageW - 20) : panels[key].w);
+  const clampPanel = (p, stageW) => ({
+    // 10 px de marge latérale (haut à 0 px) : un panneau peut aller de 10 px à stageW - 10
+    x: Math.max(10, Math.min(p.x, Math.max(10, stageW - 10 - p.w))),
+    y: Math.max(0, p.y),
+    w: Math.max(260, Math.min(p.w, Math.max(260, stageW - 20))),
+    h: Math.max(180, p.h ?? 180),
+  });
+  // Quand le plan bouge (drag/resize) et chevauche l'élévation, on pousse
+  // l'élévation juste en dessous du plan (10 px) : les deux restent « collés »
+  const resolveOverlap = (ps) => {
+    const A = ps.plan, B = ps.elev;
+    if (!A || !B) return ps;
+    const hA = A.h + 52, hB = B.h + 52; // hauteur panneau ≈ canvas + barre de titre + marge
+    const overlap = A.x < B.x + B.w && B.x < A.x + A.w && A.y < B.y + hB && B.y < A.y + hA;
+    if (!overlap) return ps;
+    const stageW = stageRef.current?.clientWidth ?? 1100;
+    return { ...ps, elev: clampPanel({ ...B, y: A.y + hA + 10 }, stageW) };
+  };
+  // En dessous de 820 px, les panneaux sont empilés en pleine largeur : pas de drag/resize
+  const isMobileLayout = () => window.innerWidth <= 820;
+  // Déplacement d'un panneau par sa barre de titre (pointer events globaux)
+  const startDrag = (e, key) => {
+    if (e.button !== 0 || isMobileLayout()) return;
+    e.preventDefault();
+    const stageW = stageRef.current?.clientWidth ?? 1100;
+    const start = { cx: e.clientX, cy: e.clientY, x: panels[key].x, y: panels[key].y };
+    const move = (ev) => {
+      if (!dragMovedRef.current && Math.hypot(ev.clientX - start.cx, ev.clientY - start.cy) > 5) dragMovedRef.current = true;
+      setPanels((prev) => {
+        const next = { ...prev, [key]: clampPanel({ ...prev[key], x: start.x + ev.clientX - start.cx, y: start.y + ev.clientY - start.cy }, stageW) };
+        return key === "plan" ? resolveOverlap(next) : next;
+      });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.setTimeout(() => { dragMovedRef.current = false; }, 0);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  // Redimensionnement par la poignée en coin bas-droit (withH = hauteur aussi, sinon largeur seule)
+  const startResize = (e, key, withH = true) => {
+    if (e.button !== 0 || isMobileLayout()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const stageW = stageRef.current?.clientWidth ?? 1100;
+    const start = { cx: e.clientX, cy: e.clientY, w: panels[key].w, h: panels[key].h };
+    const move = (ev) => {
+      setPanels((prev) => {
+        const next = { ...prev, [key]: clampPanel(
+          { ...prev[key], w: start.w + ev.clientX - start.cx, ...(withH ? { h: start.h + ev.clientY - start.cy } : {}) },
+          stageW
+        ) };
+        return key === "plan" ? resolveOverlap(next) : next;
+      });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   /* ----- Catalogues du back-office (menuiseries, modules, enveloppe) ----- */
   const [catalogue, setCatalogue] = useState(null);
@@ -1046,6 +1183,27 @@ export default function App() {
   const tarifs = useMemo(() => tarifTotal(d, env), [d, catalogue]); // eslint-disable-line react-hooks/exhaustive-deps
   const surfaces = useMemo(() => surfacesChiffrage(d, env), [d, catalogue]); // eslint-disable-line react-hooks/exhaustive-deps
   const pentsAll = pentsOf(d, env); // pents numérotés de tous les modules
+  // Modules affichés en élévation pour la face choisie : tous les modules,
+  // avec leur profondeur par rapport à la face (pour l'occlusion) et la bbox
+  // de l'ensemble (pour la projection horizontale de la façade)
+  const elevInsts = useMemo(() => {
+    const insts = d.instances?.length ? d.instances : [{ id: "m0", x: 0, y: 0, moduleId: d.moduleId, murs: modelMurs() }];
+    const b = bboxOf(d, (i) => dimsOf(d, env, i));
+    const depth = (inst) => {
+      const dm = dimsOf(d, env, inst);
+      if (selectedFace === "sud") return b.maxY - (inst.y + dm.largeur);
+      if (selectedFace === "nord") return inst.y - b.minY;
+      if (selectedFace === "est") return b.maxX - (inst.x + dm.longueur);
+      return inst.x - b.minX;
+    };
+    const list = insts.map((inst) => ({
+      inst,
+      dm: dimsOf(d, env, inst),
+      face: inst.murs?.[selectedFace] || { actif: true, ouvertures: [], surface: null },
+      depth: depth(inst),
+    }));
+    return { list, b };
+  }, [d, selectedFace]); // eslint-disable-line react-hooks/exhaustive-deps
   // dernière sauvegarde affichée dans la bande grise de la carte « Sauvegardes »
   const lastConfig = configs.length
     ? [...configs].sort((a, b) => String(b.updated ?? "").localeCompare(String(a.updated ?? "")))[0]
@@ -1428,48 +1586,40 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="top">
-        <div>
-          <h1>Configurateur de modules Baracca</h1>
-          <p>Configurez un module sur mesure et exportez les données vers Archicad (JSON API + Tapir)</p>
-        </div>
-        <div className="top-actions">
-          <span className={"badge" + (nbErreurs ? " error" : "")}>
-            {nbErreurs === 0 ? "Configuration valide" : `${nbErreurs} erreur(s)`}
-          </span>
-          <button
-            className="btn primary"
-            onClick={soumettre}
-            disabled={submitting || !session?.loggedIn}
-            title={session?.loggedIn ? "Avertir l'architecte (dev@baracca.fr) que ce dossier est prêt à être examiné" : "Connectez-vous pour soumettre"}
-          >
-            {submitting ? "Envoi…" : "Soumettre"}
-          </button>
-        </div>
-      </header>
-
       <div className="layout">
-        <div className="layout-left">
-        <div className="card">
-          <div className="card-title">Plan du module (cliquez un mur ou la toiture — pastille pour basculer mur/charpente)</div>
-          <div className="card-body">
+      <div className="stage" ref={stageRef} style={{ height: stageH }}>
+        <div className="panel" ref={(el) => { panelRefs.current.plan = el; }} style={{ left: panels.plan.x, top: panels.plan.y, width: effW("plan") }}>
+          <div className="panel-handle" onPointerDown={(e) => startDrag(e, "plan")} title="Glissez ce titre pour déplacer le panneau">
+            <span>Plan du module</span>
+            <span className="panel-hint">cliquez un mur ou la toiture — pastille pour basculer mur/charpente</span>
+            <span className="zoom-ctl" onPointerDown={(e) => e.stopPropagation()}>
+              <button type="button" className="btn small" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))} title="Réduire le plan">−</button>
+              <span className="zoom-val">{Math.round(zoom * 100)} %</span>
+              <button type="button" className="btn small" onClick={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))} title="Agrandir le plan">+</button>
+            </span>
+          </div>
+          <div className="panel-canvas" style={{ height: panels.plan.h }}>
             <Plan d={d} murs={env.murs} toitType={toitType} selectedFace={selectedFace} planSel={planSel} selInst={d.selInst}
+            w={effW("plan")} h={panels.plan.h} zoom={zoom}
             cumul={{ longueur: spanXm(d, env), largeur: spanYm(d, env), plancher: surfacePlancher(d, env) }}
             dimsOf={dimsOfInst}
-            onSelectFace={(iid, f) => { setSelectedFace(f); setPlanSel(f); setD((prev) => ({ ...prev, selInst: iid })); }}
+            onSelectFace={(iid, f) => { setSelectedFace(f); setPlanSel(f); setD((prev) => ({ ...prev, selInst: iid })); setMurOpen(true); }}
             pents={pentsAll}
             selPent={selPent}
-            onSelectPent={(iid, v) => { setPlanSel("toiture"); setSelPent({ instId: iid, versant: v }); }}
+            onSelectPent={(iid, v) => { setPlanSel("toiture"); setSelPent({ instId: iid, versant: v }); setMurOpen(true); }}
             onAddSide={openAddPick}
             onRemoveInst={removeInstance} />
+          </div>
             {addPick && (
-              <div className="add-zone" style={{ marginTop: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  <strong>Ajouter un module au côté « {addPick.side} »</strong>
-                  <button type="button" className="icon-btn danger" onClick={() => setAddPick(null)} title="Annuler" aria-label="Annuler">
-                    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
-                  </button>
-                </div>
+            <div className="modal-overlay" onClick={() => setAddPick(null)}>
+            <div className="card modal" onClick={(e) => e.stopPropagation()}>
+              <div className="card-title modal-title">
+                <span>Ajouter un module au côté « {addPick.side} »</span>
+                <button type="button" className="icon-btn danger" onClick={() => setAddPick(null)} title="Annuler" aria-label="Annuler">
+                  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+                </button>
+              </div>
+              <div className="card-body modal-body">
                 <p className="config-hint" style={{ marginTop: 0 }}>
                   Le côté commun doit faire {fmtCm(addSharedLen())} cm — seuls les modèles compatibles sont proposés.
                   Le module ajouté hérite de l'isolation, de la forme et de la charpente des réglages généraux.
@@ -1486,12 +1636,16 @@ export default function App() {
                   </div>
                 )}
               </div>
+              </div>
+            </div>
             )}
-          </div>
+          <div className="panel-resize" onPointerDown={(e) => startResize(e, "plan", true)} title="Redimensionner le panneau" />
         </div>
-        <div className="card">
-          <div className="card-title">Élévation — Mur {selEdge?.numero ?? "?"}</div>
-          <div className="card-body">
+        <div className="panel" ref={(el) => { panelRefs.current.elev = el; }} style={{ left: panels.elev.x, top: panels.elev.y, width: effW("elev") }}>
+          <div className="panel-handle" onPointerDown={(e) => startDrag(e, "elev")} title="Glissez ce titre pour déplacer le panneau">
+            <span>Élévation — Mur {selEdge?.numero ?? "?"}</span>
+            <span className="panel-hint">glissez le titre pour déplacer</span>
+          </div>
             <p style={{ fontSize: 12, color: "#78716c", margin: "0 0 6px" }}>
               Cliquez une face sur le plan (ou ci-dessous) pour changer d'élévation.
             </p>
@@ -1510,14 +1664,46 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <Elevation d={d} murs={env.murs} planchers={env.planchers} surfaces={env.facades} toiture={toitureDef} toitType={toitType} faceKey={selectedFace} faceData={face} dims={dmSel} />
+          <div className="panel-canvas" style={{ height: panels.elev.h }}>
+            <Elevation d={d} murs={env.murs} planchers={env.planchers} surfaces={env.facades} toiture={toitureDef} toitType={toitType} faceKey={selectedFace} faceData={face} dims={dmSel} insts={elevInsts.list} bbox={elevInsts.b} w={effW("elev")} h={panels.elev.h} />
           </div>
+          <div className="panel-resize" onPointerDown={(e) => startResize(e, "elev", true)} title="Redimensionner le panneau" />
         </div>
+      </div>
+      <div className="side-col">
+      <div className={"card panel-card" + (soumettreOpen ? " deplie" : "")}>
+        <div className="card-title card-toggle" onClick={() => setSoumettreOpen((o) => !o)} title={soumettreOpen ? "Replier" : "Ouvrir le conteneur Soumettre"}>
+          <span className={"carac-arrow" + (soumettreOpen ? " open" : "")}></span>
+          Soumettre
         </div>
-        <div className="layout-right">
-      <div className="card">
-        <div className="card-title">Réglages généraux</div>
-        <div className="card-body">
+        <div className="card-body" style={soumettreOpen ? undefined : { padding: 0 }}>
+          {soumettreOpen && (
+          <>
+          <span className={"badge" + (nbErreurs ? " error" : "")}>
+            {nbErreurs === 0 ? "Configuration valide" : `${nbErreurs} erreur(s)`}
+          </span>
+          <div className="mesinfos-actions">
+            <button
+              className="btn primary"
+              onClick={soumettre}
+              disabled={submitting || !session?.loggedIn}
+              title={session?.loggedIn ? "Avertir l'architecte (dev@baracca.fr) que ce dossier est prêt à être examiné" : "Connectez-vous pour soumettre"}
+            >
+              {submitting ? "Envoi…" : "Soumettre"}
+            </button>
+          </div>
+          </>
+          )}
+        </div>
+      </div>
+      <div className={"card panel-card" + (reglagesOpen ? " deplie" : "")}>
+        <div className="card-title card-toggle" onClick={() => setReglagesOpen((o) => !o)} title={reglagesOpen ? "Replier les réglages généraux" : "Ouvrir les réglages généraux"}>
+          <span className={"carac-arrow" + (reglagesOpen ? " open" : "")}></span>
+          Réglages généraux
+        </div>
+        <div className="card-body" style={reglagesOpen ? undefined : { padding: 0 }}>
+          {reglagesOpen && (
+          <>
           <div className="tabs">
             {tabsGeneraux.map(([key, label]) => (
               <button key={key} className={"tab-btn" + (tabGen === key ? " active" : "")}
@@ -1664,12 +1850,21 @@ export default function App() {
                 <div className="metric"><div className="k">Menuiseries</div><div className="v">{eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).reduce((s, e) => s + surfaceMenuiserie(e.a || {}) + surfaceMenuiserie(e.b || {}), 0).toFixed(2)} m²</div></div>
               </div>
           </>
+          </>
+          )}
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-title">{selIsToiture ? "Toiture" : `Mur ${selEdge?.numero ?? "?"}` + (face.actif ? "" : " (charpente)")}</div>
-        <div className="card-body">
+      {murOpen && (
+      <div className="modal-overlay" onClick={() => setMurOpen(false)}>
+      <div className="card modal" onClick={(e) => e.stopPropagation()}>
+        <div className="card-title modal-title">
+          <span>{selIsToiture ? "Toiture" : `Mur ${selEdge?.numero ?? "?"}` + (face.actif ? "" : " (charpente)")}</span>
+          <button type="button" className="icon-btn danger" onClick={() => setMurOpen(false)} title="Fermer" aria-label="Fermer">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+          </button>
+        </div>
+        <div className="card-body modal-body">
           {!selIsToiture && (
             <div className="fields-grid" style={{ marginBottom: 12 }}>
               <Field label="Nature du côté">
@@ -1863,7 +2058,9 @@ export default function App() {
 
         </div>
       </div>
-      <div className="card">
+      </div>
+      )}
+      <div className={"card panel-card" + (chiffrageCardOpen ? " deplie" : "")}>
         <div className="card-title card-toggle" onClick={() => setChiffrageCardOpen((o) => !o)} title={chiffrageCardOpen ? "Replier le chiffrage" : "Ouvrir le détail du chiffrage"}>
           <span className={"carac-arrow" + (chiffrageCardOpen ? " open" : "")}></span>
           Chiffrage estimatif
@@ -1905,7 +2102,7 @@ export default function App() {
           </div>
         </div>
       </div>
-      <div className="card">
+      <div className={"card panel-card" + (sauvOpen ? " deplie" : "")}>
         <div className="card-title card-toggle" onClick={() => setSauvOpen((o) => !o)} title={sauvOpen ? "Replier les sauvegardes" : "Ouvrir les sauvegardes"}>
           <span className={"carac-arrow" + (sauvOpen ? " open" : "")}></span>
           Sauvegardes
@@ -1971,7 +2168,7 @@ export default function App() {
           </div>
         </div>
       </div>
-        </div>
+      </div>
       </div>
 
       <footer className="foot">
