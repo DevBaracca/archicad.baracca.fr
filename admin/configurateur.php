@@ -330,6 +330,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pente = max(0, min(90, (int) round(cat_num('pente'))));
         $pente1 = max(0, min(90, (int) round(cat_num('pente1'))));
         $pente2 = max(0, min(90, (int) round(cat_num('pente2'))));
+        $depassee = max(0, min(200, round(cat_num('depassee') * 10) / 10)); // débordée de toiture, en cm
         // deux pentes : une pente par versant ; monopente / quatre pentes : une pente
         if ($geometrie === 'deuxpentes' ? ($pente1 <= 0 || $pente2 <= 0) : $pente <= 0) {
             cat_redirect('formes', 'invalid');
@@ -346,6 +347,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'pente' => $pente,
             'pente1' => $pente1,
             'pente2' => $pente2,
+            'depassee' => $depassee, // débordée de toiture en cm (surface + élévations)
             'pignon' => $geometrie === 'deuxpentes', // dénormalisé (deux pentes = pignon)
         ], $id !== '' ? $id : null);
         // Visuel (suppression demandée ou nouvel envoi)
@@ -1011,7 +1013,7 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
       <?php else: ?>
         <table class="admin-table">
           <thead>
-            <tr><th>Visuel</th><th>Nom</th><th>Géométrie</th><th>Pente(s)</th><th>Actions</th></tr>
+            <tr><th>Visuel</th><th>Nom</th><th>Géométrie</th><th>Pente(s)</th><th>Débordée</th><th>Actions</th></tr>
           </thead>
           <tbody>
             <?php foreach ($formes as $fo): ?>
@@ -1020,6 +1022,7 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
                 <td><strong><?= htmlspecialchars((string) $fo['nom']) ?></strong><?= !empty($fo['defaut']) ? ' <span class="admin-badge-defaut">défaut</span>' : '' ?></td>
                 <td><?= htmlspecialchars($formeGeoLabels[$fo['geometrie'] ?? ''] ?? (string) ($fo['geometrie'] ?? '')) ?></td>
                 <td><?= ($fo['geometrie'] ?? '') === 'deuxpentes' ? (int) ($fo['pente1'] ?? 0) . '° / ' . (int) ($fo['pente2'] ?? 0) . '° (par versant)' : (int) ($fo['pente'] ?? 0) . '°' ?></td>
+                <td><?= (float) ($fo['depassee'] ?? 30) ?> cm</td>
                 <td class="admin-actions">
                   <?= cat_action_edit('configurateur.php?section=formes&edit=' . urlencode((string) $fo['id'])) ?>
                   <?= cat_action_delete('configurateur.php?section=formes', $csrf, 'delete_forme', (string) $fo['id'], 'Supprimer cette forme de toiture du catalogue ?') ?>
@@ -1083,6 +1086,13 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
           <div class="admin-form-row">
             <label for="fo-pente2">Pente versant 2 (°)</label>
             <input type="number" id="fo-pente2" name="pente2" step="1" min="1" max="90" value="<?= htmlspecialchars((string) ($editForme['pente2'] ?? $editForme['pente'] ?? '30')) ?>">
+          </div>
+        </div>
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="fo-depassee">Débordée de toiture (cm)</label>
+            <input type="number" id="fo-depassee" name="depassee" step="0.1" min="0" max="200" value="<?= htmlspecialchars((string) ($editForme['depassee'] ?? '30')) ?>">
+            <span class="admin-hint">Débord de la toiture au-delà des murs, utilisé pour le calcul de la surface et les élévations. 0 = aucun débord. Par défaut : 30 cm.</span>
           </div>
         </div>
         <script>

@@ -30,7 +30,7 @@ include 'includes/head.html';
     <div class="container">
       <div class="hero-content fade-in">
         <h1>Configurateur de modules</h1>
-        <p class="hero-subtitle">Concevez votre module sur mesure et exportez le fichier JSON pour Archicad.</p>
+        <p class="hero-subtitle">Concevez, modifiez, obtenez un chiffrage en temps réel</p>
       </div>
       <?php if ($isLoggedIn): ?>
         <div class="hero-side fade-in">
@@ -56,8 +56,8 @@ include 'includes/head.html';
         <div class="fade-in">
           <iframe
             id="configurateur-frame"
-            src="/configurateur/<?= $configId !== '' ? '?config=' . urlencode($configId) : '' ?>"
-            width="100%" height="1400"
+            src="/configurateur/index.html<?= ($configId !== '' ? '?config=' . urlencode($configId) . '&' : '?') ?>v=<?= @filemtime(__DIR__ . '/configurateur/index.html') ?: time() ?>"
+            width="100%" height="900"
             style="border:0; border-radius:12px; box-shadow: var(--box-shadow-xl);"
             title="Configurateur de modules Baracca">
           </iframe>
@@ -109,7 +109,9 @@ include 'includes/head.html';
         try {
           var doc = frame.contentDocument;
           if (!doc || !doc.body) return;
-          var h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
+          // uniquement le contenu réel du body : documentElement.scrollHeight inclut
+          // la hauteur courante de l'iframe -> le blanc augmenterait à chaque resize
+          var h = doc.body.scrollHeight;
           var next = Math.max(600, h + 16); // 600 px mini
           if (Math.abs(next - last) > 2) { frame.height = next; last = next; }
         } catch (e) { /* cross-origin : on garde la hauteur fixe */ }
