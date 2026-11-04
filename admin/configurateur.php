@@ -611,11 +611,11 @@ $groupes = [
         ['charpentes', 'Charpentes', count($charpentes)],
         ['murs', 'Murs', count($murs)],
         ['planchers', 'Planchers', count($planchers)],
-        ['toitures', 'Toitures', count($toitures)],
+        ['toitures', 'Complexe de toiture', count($toitures)],
         ['menuiseries', 'Ouvrants', count($menuiseries)],
     ]],
-    'surfaces' => ['label' => 'Surfaces', 'sections' => [
-        ['surfaces', 'Surfaces', count($facades)],
+    'surfaces' => ['label' => 'Revêtements', 'sections' => [
+        ['surfaces', 'Revêtements', count($facades)],
     ]],
 ];
 $groupeOf = [
@@ -915,7 +915,7 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
     <?php elseif ($section === 'isolation'): ?>
     <div class="admin-card">
       <h2>Isolations (<?= count($isolations) ?>) <?= cat_btn_add('configurateur.php?section=isolation&new=1', 'Ajouter une isolation') ?></h2>
-      <p class="admin-hint">L'onglet « Isolation » du configurateur : le client choisit ici le type de mur porteur, de plancher et de toiture du module (références vers les onglets Murs, Planchers et Toitures). Le visuel est affiché dans le configurateur.</p>
+      <p class="admin-hint">L'onglet « Isolation » du configurateur : le client choisit ici le type de mur porteur, de plancher et de toiture du module (références vers les onglets Murs, Planchers et Complexe de toiture). Le visuel est affiché dans le configurateur.</p>
       <?php if ($isolations === []): ?>
         <p class="admin-hint">Aucune isolation dans le catalogue pour le moment.</p>
       <?php else: ?>
@@ -1217,8 +1217,8 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
 
     <?php elseif ($section === 'surfaces'): ?>
     <div class="admin-card">
-      <h2>Surfaces (<?= count($facades) ?>) <?= cat_btn_add('configurateur.php?section=surfaces&new=1', 'Ajouter une surface') ?></h2>
-      <p class="admin-hint">Surfaces d'habillage extérieur choisies pour les murs et les toitures ; le visuel téléversé est utilisé dans les élévations du configurateur. Pas de référence Archicad pour cette rubrique.</p>
+      <h2>Revêtements (<?= count($facades) ?>) <?= cat_btn_add('configurateur.php?section=surfaces&new=1', 'Ajouter une surface') ?></h2>
+      <p class="admin-hint">Revêtements d'habillage extérieur choisies pour les murs et les toitures ; le visuel téléversé est utilisé dans les élévations du configurateur. Pas de référence Archicad pour cette rubrique.</p>
       <?php if ($facades === []): ?>
         <p class="admin-hint">Aucune surface dans le catalogue pour le moment.</p>
       <?php else: ?>
@@ -1342,7 +1342,7 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         </table>
       <?php endif; ?>
       <?php else: ?>
-      <h2>Toitures (<?= count($toitures) ?>) <?= cat_btn_add('configurateur.php?section=toitures&new=1', 'Ajouter un type de toiture') ?></h2>
+      <h2>Complexe de toiture (<?= count($toitures) ?>) <?= cat_btn_add('configurateur.php?section=toitures&new=1', 'Ajouter un type de toiture') ?></h2>
       <p class="admin-hint">Types de toiture : épaisseur (bande au-dessus de la ligne directrice en élévation), surface, couleur, référence Archicad, coût au m². La géométrie (monopente / deux pentes / quatre pentes) se règle dans l'onglet « Formes ».</p>
       <?php if ($toitures === []): ?>
         <p class="admin-hint">Aucun type de toiture dans le catalogue pour le moment.</p>

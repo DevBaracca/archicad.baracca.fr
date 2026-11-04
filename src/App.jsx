@@ -61,6 +61,7 @@ const DEFAULTS = {
   forme: null, // forme de toiture choisie (catalogue « formes » : géométrie, pentes)
   charpente: null, // charpente choisie (catalogue « charpentes »)
   geometrie: null, // géométrie de la forme : monopente / deuxpentes / quatrepentes
+  depassee: null, // débord de toiture chosen côté client (cm) ; null = valeur de la forme (back-office)
   longueur: 6.0,
   largeur: 3.0,
   hauteur: 2.8,
@@ -131,16 +132,17 @@ function pentsOf(d, env) {
   const toiture = toitureDefOf(d, env);
   const epToit = +(toiture?.epaisseur ?? 0.30);
   const forme = formeDefOf(d, env);
-  // débordée de la forme (champ back-office « Formes », en cm) ; défaut = épaisseur toiture
-  const dep = Math.max(0, +(forme?.depassee ?? epToit * 100)) / 100; // en m
+  // débordée : champ client (d.depassee) sinon champ back-office de la forme, en cm ; défaut = épaisseur toiture
+  const dep = Math.max(0, +(d.depassee ?? forme?.depassee ?? epToit * 100)) / 100; // en m (client > forme > épaisseur)
   const c1 = Math.cos((pente1Of(d) * Math.PI) / 180);
   const c2 = Math.cos((pente2Of(d) * Math.PI) / 180);
   const keys = versantsOf(toitType);
   const out = [];
   let n = 0;
   const insts = d.instances?.length ? d.instances : [{ id: "m0", moduleId: d.moduleId }];
-  // côtés communs à deux modules : pas de débord de toiture dessus
-  const edges = eachEdge(d, (i) => dimsOf(d, env, i), epToit);
+  // côtés communs à deux modules ACCOLÉS (mur commun, même profondeur) : pas de débord dessus.
+  // eachEdge a besoin de l'épaisseur du MUR (pas de la toiture) pour reconnaître les voisins collés
+  const edges = eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env));
   const commun = (instId, face) => edges.some((e) => e.inst.id === instId && e.face === face && !!e.edge);
   insts.forEach((inst, idx) => {
     const dm = dimsOf(d, env, inst);
@@ -148,8 +150,8 @@ function pentsOf(d, env) {
     const extPerim = FACES.reduce((s, f) => s + (commun(inst.id, f.key) ? 0 : murLongueurDm(dm, f.key)), 0);
     for (const v of keys) {
       n++;
-      let area;
-      if (toitType === "terrasse") area = (dm.longueur * dm.largeur) / keys.length;
+      let area, areaBase; // areaBase = surface sur la ligne directrice, SANS débords (complexe de toiture)
+      if (toitType === "terrasse") { areaBase = (dm.longueur * dm.largeur) / keys.length; area = areaBase; }
       else if (toitType === "deuxpentes") {
         // faitage éventuellement décalé (pentes différentes) : chaque versant a sa
         // propre largeur horizontale run1 (nord) / run2 (sud), pas largeur/2
@@ -157,12 +159,13 @@ function pentsOf(d, env) {
         const hF = hauteurFaitageDm(dm, pente1Of(d), pente2Of(d), "deuxpentes");
         const run1 = t1 > 0 ? Math.min(Math.max(hF / t1, 0), dm.largeur) : dm.largeur / 2;
         const run2 = dm.largeur - run1;
-        area = dm.longueur * (v === "nord" ? run1 / c1 : run2 / c2) + dm.longueur * dep * nbPigExt;
+        areaBase = dm.longueur * (v === "nord" ? run1 / c1 : run2 / c2);
+        area = areaBase + dm.longueur * dep * nbPigExt;
       }
-      else if (toitType === "quatrepentes") area = surfaceToitureDm(dm, pente1Of(d), pente2Of(d), toitType) / 4 + (dep * extPerim) / 4;
-      else area = dm.longueur * (dm.largeur / c1) + dm.longueur * dep * nbPigExt; // monopente
+      else if (toitType === "quatrepentes") { areaBase = surfaceToitureDm(dm, pente1Of(d), pente2Of(d), toitType) / 4; area = areaBase + (dep * extPerim) / 4; }
+      else { areaBase = dm.longueur * (dm.largeur / c1); area = areaBase + dm.longueur * dep * nbPigExt; } // monopente
       out.push({
-        numero: n, instId: inst.id, instIndex: idx + 1, versant: v, area,
+        numero: n, instId: inst.id, instIndex: idx + 1, versant: v, area, areaBase,
         surfaceId: d.surfacesToiture?.[inst.id]?.[v] ?? toiture?.surface ?? "",
       });
     }
@@ -175,28 +178,32 @@ function pentsOf(d, env) {
    (arête active si l'un des deux côtés est un mur). */
 function eachEdge(d, dmOf, ep) {
   const insts = d.instances?.length ? d.instances : [];
-  const eps = 1e-6;
+  const tol = 0.02; // tolérance 2 cm (positions arrondies, etc.)
+  const r = (v) => Math.round(v * 100) / 100; // clé de jonction stable, arrondie au cm
   const seen = new Set();
   let num = 0;
   const out = [];
   for (const inst of insts) {
     const dm = dmOf(inst);
+    // chevauchement partiel autorisé sur l'autre axe (jonctions en T comprises)
+    const chevY = (j) => { const dj = dmOf(j); return j.y < inst.y + dm.largeur - tol && j.y + dj.largeur > inst.y + tol; };
+    const chevX = (j) => { const dj = dmOf(j); return j.x < inst.x + dm.longueur - tol && j.x + dj.longueur > inst.x + tol; };
     for (const f of FACES) {
       let nb = null, nface = null, key = null;
       if (f.key === "est") {
         const x = inst.x + dm.longueur + ep;
-        nb = insts.find((j) => Math.abs(j.x - x) < eps && Math.abs(j.y - inst.y) < eps);
-        if (nb) { key = `V${x},${inst.y}`; nface = "ouest"; }
+        nb = insts.find((j) => Math.abs(j.x - x) < tol && chevY(j));
+        if (nb) { const dj = dmOf(nb); key = `V${r(x)}:${r(Math.max(inst.y, nb.y))}-${r(Math.min(inst.y + dm.largeur, nb.y + dj.largeur))}`; nface = "ouest"; }
       } else if (f.key === "ouest") {
-        nb = insts.find((j) => Math.abs(j.x + dmOf(j).longueur + ep - inst.x) < eps && Math.abs(j.y - inst.y) < eps);
-        if (nb) { key = `V${inst.x},${inst.y}`; nface = "est"; }
+        nb = insts.find((j) => Math.abs(j.x + dmOf(j).longueur + ep - inst.x) < tol && chevY(j));
+        if (nb) { const dj = dmOf(nb); key = `V${r(inst.x)}:${r(Math.max(inst.y, nb.y))}-${r(Math.min(inst.y + dm.largeur, nb.y + dj.largeur))}`; nface = "est"; }
       } else if (f.key === "sud") {
         const y = inst.y + dm.largeur + ep;
-        nb = insts.find((j) => Math.abs(j.y - y) < eps && Math.abs(j.x - inst.x) < eps);
-        if (nb) { key = `H${inst.x},${y}`; nface = "nord"; }
+        nb = insts.find((j) => Math.abs(j.y - y) < tol && chevX(j));
+        if (nb) { const dj = dmOf(nb); key = `H${r(Math.max(inst.x, nb.x))}-${r(Math.min(inst.x + dm.longueur, nb.x + dj.longueur))}:${r(y)}`; nface = "nord"; }
       } else {
-        nb = insts.find((j) => Math.abs(j.y + dmOf(j).largeur + ep - inst.y) < eps && Math.abs(j.x - inst.x) < eps);
-        if (nb) { key = `H${inst.x},${inst.y}`; nface = "sud"; }
+        nb = insts.find((j) => Math.abs(j.y + dmOf(j).largeur + ep - inst.y) < tol && chevX(j));
+        if (nb) { const dj = dmOf(nb); key = `H${r(Math.max(inst.x, nb.x))}-${r(Math.min(inst.x + dm.longueur, nb.x + dj.longueur))}:${r(inst.y)}`; nface = "sud"; }
       }
       const a = inst.murs[f.key];
       if (key) {
@@ -394,6 +401,17 @@ function mursChiffrage(d, env) {
       const v1 = (base / 2) / c1, v2 = (base / 2) / c2;  // longueur des 2 versants (pentes propres)
       area += (base * hF) / 2 + (v1 + v2) * epToit;     // triangle du pignon + ép. toiture sur les 2 versants
     }
+    // monopente : le mur nord monte droit jusqu'au faitage (hauteur + hF) ;
+    // est/ouest ont le triangle de pignon (pan incliné vu de côté)
+    if (toitType === "monopente") {
+      if (e.face === "nord") area = longueurExt * (dm.hauteur + hF);
+      else if (e.face === "est" || e.face === "ouest") {
+        const base = dm.largeur + 2 * epMur;
+        area += (base * hF) / 2 + (base / c1) * epToit; // triangle de pignon + ép. toiture
+      }
+    }
+    // quatre pentes (croupe) et terrasse : les murs restent rectangulaires,
+    // ce sont les versants de toiture qui forment les croupes
     // les ouvrants remplacent de la surface de mur
     const ouv = [...(e.a?.ouvertures || []), ...(e.b?.ouvertures || [])];
     area -= ouv.reduce((ss, o) => ss + o.largeur * o.hauteur, 0);
@@ -424,7 +442,8 @@ function surfacesChiffrage(d, env) {
   const plancher = surfacePlancher(d, env); // cumul des surfaces entre 4 murs
   // surface toiture : cumul de tous les pents de tous les modules
   const pents = pentsOf(d, env);
-  const toitureS = pents.reduce((s, p) => s + p.area, 0);
+  const toitureS = pents.reduce((s, p) => s + p.area, 0); // avec débords (couverture)
+  const toitureBase = pents.reduce((s, p) => s + (p.areaBase ?? p.area), 0); // ligne directrice, sans débords (complexe)
   const edges = eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env));
   const ouvrants = edges.reduce(
     (n, e) => n + (e.actif ? (e.a?.ouvertures.length || 0) + (e.b?.ouvertures.length || 0) : 0),
@@ -432,7 +451,7 @@ function surfacesChiffrage(d, env) {
   );
   // côtés passés en charpente (pas de mur) : comptés à l'unité
   const charpentes = edges.reduce((n, e) => n + (e.actif ? 0 : 1), 0);
-  return { murs: M.total, mursDetail: M.detail, plancher, toiture: toitureS, pents, ouvrants, charpentes };
+  return { murs: M.total, mursDetail: M.detail, plancher, toiture: toitureS, toitureBase, pents, ouvrants, charpentes };
 }
 
 function tarifTotal(d, env) {
@@ -451,10 +470,12 @@ function tarifTotal(d, env) {
   );
   // murs : somme des montants par mur (coût mur + coût de la surface choisie × surface)
   const murAmount = S.mursDetail.reduce((s, m) => s + m.amount, 0);
-  // toiture : par pent — (coût toiture + coût de la surface du pent) × surface du pent
-  const toitureAmount = (S.pents || []).reduce((s, p) => {
+  // complexe de toiture : tarif de la toiture × surface sur la ligne directrice (sans débords)
+  const toitureAmount = (S.pents || []).reduce((s, p) => s + eurM2(toiture) * (p.areaBase ?? p.area), 0);
+  // couverture : tarif de la surface choisie pour le pent × surface AVEC débords
+  const couvertureAmount = (S.pents || []).reduce((s, p) => {
     const sd = env.facades.find((f) => f.id === p.surfaceId);
-    return s + (eurM2(toiture) + eurM2(sd)) * p.area;
+    return s + eurM2(sd) * p.area;
   }, 0);
   // Charpente : coût unitaire de la charpente choisie (Réglages généraux) × nb de côtés en charpente
   const charpenteDef = env.charpentes?.find((c) => c.id === d.charpente);
@@ -465,14 +486,16 @@ function tarifTotal(d, env) {
     plancher: eurM2(plancher) * S.plancher,
     facade: facade ? +facade.tarif || 0 : 0,
     toiture: toitureAmount,
+    couverture: couvertureAmount,
     menuiseries,
     charpente: charpenteAmount,
   };
-  t.total = t.module + t.mur + t.plancher + t.facade + t.toiture + t.menuiseries + t.charpente;
-  // détail par pent (numéro, surface, montant)
+  t.total = t.module + t.mur + t.plancher + t.facade + t.toiture + t.couverture + t.menuiseries + t.charpente;
+  // détail par pent (numéro, surface, montant) — part couverture (surface choisie × surface avec débords)
   t.pents = (S.pents || []).map((p) => ({
     ...p,
-    amount: (eurM2(toiture) + eurM2(env.facades.find((f) => f.id === p.surfaceId))) * p.area,
+    amount: eurM2(env.facades.find((f) => f.id === p.surfaceId)) * p.area, // couverture (avec débords)
+    amountBase: eurM2(toiture) * (p.areaBase ?? p.area), // complexe de toiture (sans débords)
   }));
   return t;
 }
@@ -735,20 +758,19 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
           <path d="M0 6 L6 0" stroke="#c8b8a5" strokeWidth="1" />
         </pattern>
         {/* quadrillage façon plan d'architecte */}
-        <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
-          <path d="M20 0 H0 V20" fill="none" stroke="#e3ded8" strokeWidth="0.6" />
+        <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
+          <path d="M10 0 H0 V10" fill="none" stroke="#d9d3cb" strokeWidth="0.6" />
         </pattern>
-        <pattern id="grid100" width="100" height="100" patternUnits="userSpaceOnUse">
-          <path d="M100 0 H0 V100" fill="none" stroke="#d5cfc7" strokeWidth="1" />
+        <pattern id="grid100" width="50" height="50" patternUnits="userSpaceOnUse">
+          <path d="M50 0 H0 V50" fill="none" stroke="#c8c0b4" strokeWidth="1" />
         </pattern>
+        <filter id="blurShP" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3" /></filter>
       </defs>
       <rect x="0" y="0" width={W} height={H} fill="url(#grid)" />
       <rect x="0" y="0" width={W} height={H} fill="url(#grid100)" />
-      {/* léger ombrage sous chaque module (profondeur) */}
-      {insts.map((inst) => (
-        <rect key={"sh-" + inst.id} x={X(inst.x) + 6} y={Y(inst.y) + 8} width={Lof(inst)} height={lof(inst)}
-          fill="rgba(28,25,23,0.10)" />
-      ))}
+      {/* ombre globale sous l'ensemble des modules (relief), pas par module */}
+      <rect x={X(b.minX) + 10} y={Y(b.minY) + 12} width={(b.maxX - b.minX) * scale} height={(b.maxY - b.minY) * scale}
+        fill="rgba(28,25,23,0.28)" filter="url(#blurShP)" />
       {/* lignes directrices (intérieures) de chaque module + zone toiture cliquable */}
       {insts.map((inst) => (
         <rect key={inst.id} x={X(inst.x)} y={Y(inst.y)} width={Lof(inst)} height={lof(inst)}
@@ -764,7 +786,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
             stroke="none"
             style={{ cursor: "pointer" }}
             title={`Pent ${pp.numero} (${pp.versant})`}
-            onClick={() => onSelectPent(inst.id, pp.versant)}
+            onClick={(ev) => onSelectPent(inst.id, pp.versant, ev)}
           />
         ));
       })}
@@ -801,7 +823,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
         const f = FACES.find((x) => x.key === e.face);
         const lp = labelPos(e);
         return (
-          <g key={i} onClick={() => onSelectFace(e.inst.id, e.face)} style={{ cursor: "pointer" }}>
+          <g key={i} onClick={(ev) => onSelectFace(e.inst.id, e.face, ev)} style={{ cursor: "pointer" }}>
             <rect
               x={p.x} y={p.y} width={p.w} height={p.h}
               fill={e.actif ? rgbHex(murDef.rgb) : "#e5e5e5"}
@@ -844,7 +866,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
           });
         });
         return btns.map((b) => (
-          <g key={`${b.inst.id}-${b.side}`} onClick={() => onAddSide(b.inst.id, b.side)}
+          <g key={`${b.inst.id}-${b.side}`} onClick={(ev) => onAddSide(b.inst.id, b.side, ev)}
             style={{ cursor: "pointer" }} title={`Ajouter un module au côté ${b.side} (choisir le modèle)`}>
             <circle cx={b.cx} cy={b.cy} r="10" fill="#2563eb" />
             <path d={`M ${b.cx - 4.5} ${b.cy} H ${b.cx + 4.5} M ${b.cx} ${b.cy - 4.5} V ${b.cy + 4.5}`} stroke="#fff" strokeWidth="2.2" strokeLinecap="round" fill="none" />
@@ -871,7 +893,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
 /* =================================================================
    Élévation SVG (façade sud)
 ================================================================= */
-function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, faceData, dims, w, h, insts, bbox }) {
+function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, faceData, dims, w, h, insts, bbox, depM }) {
   const W = w ?? 560, H = h ?? 320, margin = 60;
   const horiz = faceKey === "nord" || faceKey === "sud";
   // Un segment par module : l'élévation est une vraie projection de la façade,
@@ -926,9 +948,9 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
   // path de toiture d'un segment ; debG/debD = débord autorisé à gauche/droite
   // (false sur un côté commun à deux modules qui se touchent : pas de débord là)
   const toitOf = (x0s, Ls, yTop, hF, dm, debG = true, debD = true) => {
-    // débord de toiture, même unité partout : 0,4 × épaisseur ; en vue de côté (horiz)
-    // il est latéral (en x), en vue de pignon (est/ouest) il suit la pente (prolonge)
-    const debP = epToitPx * 0.4;
+    // débord de toiture : la vraie valeur (depM en m) convertie en px par l'échelle,
+    // identique partout ; en vue de côté (horiz) il est latéral (en x), en pignon il suit la pente
+    const debP = (depM ?? epToit) * scale;
     const debL = horiz && debG ? debP : 0;
     const debR = horiz && debD ? debP : 0;
     const xaS = x0s - epPx - debL, xbS = x0s + Ls + epPx + debR;
@@ -974,17 +996,42 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
     const eps = 1e-6;
     const posOf = (o) => (horiz ? o.inst?.x : o.inst?.y) ?? 0;
     const lenOf = (o) => (horiz ? o.dm.longueur : o.dm.largeur);
-    let debG = !segs.some((o) => o !== s && Math.abs(posOf(o) + lenOf(o) - pos) < eps);
-    let debD = !segs.some((o) => o !== s && Math.abs(pos + lenM - posOf(o)) < eps);
+    const epM = murDef.epaisseur; // deux modules accolés sont espacés de l'épaisseur du mur commun
+    // côté commun = voisin accolé À LA MÊME PROFONDEUR qui touche ; un voisin en
+    // retrait (profondeur différente, ex. L au nord) ne supprime pas le débord
+    const memeProf = (o) => Math.abs((o.depth ?? 0) - (s.depth ?? 0)) < eps;
+    let debG = !segs.some((o) => o !== s && memeProf(o) && Math.abs(posOf(o) + lenOf(o) + epM - pos) < eps);
+    let debD = !segs.some((o) => o !== s && memeProf(o) && Math.abs(pos + lenM + epM - posOf(o)) < eps);
     if (miroir) { const t = debG; debG = debD; debD = t; } // en nord/est, l'axe est inversé
     return { ...s, x0s, Ls, hM, hF, yTop: yPlancher - hM, toit: toitOf(x0s, Ls, yPlancher - hM, hF, s.dm, debG, debD) };
   });
-  placed.sort((a, c) => (c.depth ?? 0) - (a.depth ?? 0));
+  placed.sort((a, c) => (c.depth ?? 0) - (a.depth ?? 0)); // dessin du fond vers l'avant
+  // un seul toit visible par zone de chevauchement : le segment le plus proche de la face
+  placed.forEach((s) => {
+    const pos = horiz ? (s.inst?.x ?? 0) : (s.inst?.y ?? 0);
+    const lenM = horiz ? s.dm.longueur : s.dm.largeur;
+    const posO = (o) => (horiz ? o.inst?.x : o.inst?.y) ?? 0;
+    const lenO = (o) => (horiz ? o.dm.longueur : o.dm.largeur);
+    s.toitVisible = !placed.some((o) => o !== s && (o.depth ?? 0) < (s.depth ?? 0) &&
+      pos < posO(o) + lenO(o) && posO(o) < pos + lenM);
+  });
   // profondeur relative (0 = le plus proche de la face) pour griser les segments au fond
   const maxDepth = Math.max(0, ...placed.map((s) => s.depth ?? 0));
   const ox = (o, seg) => seg.x0s + (miroir ? seg.Ls - (o.position + o.largeur) * scale : o.position * scale);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ width: "100%", height: "100%" }}>
+      <defs>
+        {/* même quadrillage que le plan, en fond de façade */}
+        <pattern id="gridE" width="10" height="10" patternUnits="userSpaceOnUse">
+          <path d="M10 0 H0 V10" fill="none" stroke="#d9d3cb" strokeWidth="0.6" />
+        </pattern>
+        <pattern id="gridE100" width="50" height="50" patternUnits="userSpaceOnUse">
+          <path d="M50 0 H0 V50" fill="none" stroke="#c8c0b4" strokeWidth="1" />
+        </pattern>
+        <filter id="blurShE" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3" /></filter>
+      </defs>
+      <rect x="0" y="0" width={W} height={H} fill="url(#gridE)" />
+      <rect x="0" y="0" width={W} height={H} fill="url(#gridE100)" />
       <line x1={20} y1={ySol} x2={W - 20} y2={ySol} stroke="#a8a29e" strokeWidth="2" />
       {/* plancher continu : ligne directrice en haut (bas des murs), épaisseur vers le bas,
           bords à 21,7 cm au-delà de la ligne directrice des murs */}
@@ -1024,14 +1071,19 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
                 width={o.largeur * scale} height={o.hauteur * scale}
                 fill={o.type === "porte" ? "#7c2d12" : "#0284c7"} opacity="0.85" rx="2" />
             ))}
-            {/* toiture du segment : bande d'épaisseur AU-DESSUS de sa ligne directrice (en bas) */}
-            <path d={seg.toit.path} stroke={mixHex(rgbHex(toitRgb), "#a8a29e", 0.7 * t)} strokeWidth="3" fill={seg.toit.fill} strokeLinejoin="round" strokeLinecap="butt" />
+            {/* toiture du segment — un seul pan visible par zone de chevauchement
+                (le plus proche de la face recouvre les autres) */}
+            {seg.toitVisible !== false && (
+              <path d={seg.toit.path} stroke={mixHex(rgbHex(toitRgb), "#a8a29e", 0.7 * t)} strokeWidth="3" fill={seg.toit.fill} strokeLinejoin="round" strokeLinecap="butt" />
+            )}
             {!seg.face?.actif && (
               <text x={seg.x0s + seg.Ls / 2} y={seg.yTop + seg.hM / 2} textAnchor="middle" fill="#a8a29e" fontSize="11">Charpente (pas de mur)</text>
             )}
           </g>
         );
       })}
+      {/* ombre globale sous toute la façade (relief), pas par segment */}
+      <rect x={x0 - epPx + 8} y={yPlancher + 4} width={L + 2 * epPx} height={epPxP + 8} fill="rgba(28,25,23,0.25)" filter="url(#blurShE)" />
       <text x={x0 + L / 2} y={yPlancher - hMax * scale - hFmax * scale - 12} textAnchor="middle" fill="#78716c" fontSize="11">
         {toitType === "terrasse"
           ? `${nom} — terrasse plate (${segs.length} module${segs.length > 1 ? "s" : ""})`
@@ -1066,8 +1118,7 @@ const Rubrique = ({ titre, hint, ouvert, onToggle, children }) => (
 
 /* Un choix de catalogue : case à cocher + vignette + nom + détail */
 const Choix = ({ checked, onChange, image, nom, detail }) => (
-  <label className={"choix-row" + (checked ? " checked" : "")}>
-    <input type="checkbox" checked={checked} onChange={onChange} />
+  <label className={"choix-row" + (checked ? " checked" : "")} onClick={(e) => { e.preventDefault(); onChange(); }}>
     {image
       ? <img src={image} alt="" className="choix-thumb" />
       : <span className="choix-thumb choix-thumb-empty" />}
@@ -1126,7 +1177,8 @@ export default function App() {
   const [flash, setFlash] = useState("");
   const [caracOpen, setCaracOpen] = useState(false); // zone « Caractéristiques techniques » fermée par défaut
   const [chiffrageOpen, setChiffrageOpen] = useState(false); // détail par mur du chiffrage, fermé par défaut
-  const [pentsOpen, setPentsOpen] = useState(false); // détail par pent de toiture, fermé par défaut
+  const [pentsOpen, setPentsOpen] = useState(false); // détail par pent couverture, fermé par défaut
+  const [pentsBaseOpen, setPentsBaseOpen] = useState(false); // détail par pent complexe de toiture, fermé par défaut
   const [addOpen, setAddOpen] = useState(false);     // zone d'ajout d'un ouvrant (sous le +)
   const [addMenuiserieId, setAddMenuiserieId] = useState("");
   const [addError, setAddError] = useState("");
@@ -1294,6 +1346,13 @@ export default function App() {
   const toitType = toitTypeOf(d, env);
   const toitureNom = toitureDef.nom;
   const formeDef = formeDefOf(d, env);
+  // débord de toiture effectif (m) : champ client > champ back-office de la forme > épaisseur
+  const depToitM = Math.max(0, +(d.depassee ?? formeDef?.depassee ?? +(toitureDef.epaisseur ?? 0.30) * 100)) / 100;
+  const [popPos, setPopPos] = useState(null); // position écran du dernier clic sur le plan (ancrage des pop-ups)
+  // pop-ups ancrées horizontalement sur l'élément cliqué du plan (centrées dessus)
+  const popStyle = popPos
+    ? { position: "fixed", margin: 0, left: Math.max(8, Math.min(popPos.x - 200, (window.innerWidth || 1200) - 416)), top: Math.max(8, Math.min(popPos.y - 24, (window.innerHeight || 800) - 120)) }
+    : undefined;
   const murSel = env.murs.find((m) => m.id === d.murType);
   const moduleSel = env.modules?.find((m) => m.id === d.moduleId);
   const isoSel = env.isolations?.find((x) => x.id === d.isolation);
@@ -1353,7 +1412,7 @@ export default function App() {
 
   /* Clic sur un + du plan : ouvre le choix du modèle à ajouter. Le côté commun
      doit avoir la même longueur -> on ne propose que les modèles compatibles. */
-  const openAddPick = (instId, side) => setAddPick({ instId, side });
+  const openAddPick = (instId, side, ev) => { setAddPick({ instId, side }); if (ev) setPopPos({ x: ev.clientX, y: ev.clientY }); };
   const addSharedLen = () => {
     if (!addPick) return 0;
     const dm = dimsOfInst(instOf(d, addPick.instId));
@@ -1734,16 +1793,16 @@ export default function App() {
             w={effW("plan")} h={panels.plan.h} zoom={zoom}
             cumul={{ longueur: spanXm(d, env), largeur: spanYm(d, env), plancher: surfacePlancher(d, env) }}
             dimsOf={dimsOfInst}
-            onSelectFace={(iid, f) => { setSelectedFace(f); setPlanSel(f); setD((prev) => ({ ...prev, selInst: iid })); setMurOpen(true); }}
+            onSelectFace={(iid, f, ev) => { setSelectedFace(f); setPlanSel(f); setD((prev) => ({ ...prev, selInst: iid })); setMurOpen(true); if (ev) setPopPos({ x: ev.clientX, y: ev.clientY }); }}
             pents={pentsAll}
             selPent={selPent}
-            onSelectPent={(iid, v) => { setPlanSel("toiture"); setSelPent({ instId: iid, versant: v }); setMurOpen(true); }}
+            onSelectPent={(iid, v, ev) => { setPlanSel("toiture"); setSelPent({ instId: iid, versant: v }); setMurOpen(true); if (ev) setPopPos({ x: ev.clientX, y: ev.clientY }); }}
             onAddSide={openAddPick}
             onRemoveInst={removeInstance} />
           </div>
             {addPick && (
             <div className="modal-overlay" onClick={() => setAddPick(null)}>
-            <div className="card modal" onClick={(e) => e.stopPropagation()}>
+            <div className="card modal" style={popStyle} onClick={(e) => e.stopPropagation()}>
               <div className="card-title modal-title">
                 <span>Ajouter un module au côté « {addPick.side} »</span>
                 <button type="button" className="icon-btn danger" onClick={() => setAddPick(null)} title="Annuler" aria-label="Annuler">
@@ -1782,7 +1841,7 @@ export default function App() {
               <Rosace size={88} active={selectedFace} onPick={(k) => { setSelectedFace(k); setPlanSel(k); }} />
             </div>
           <div className="panel-canvas" style={{ height: panels.elev.h }}>
-            <Elevation d={d} murs={env.murs} planchers={env.planchers} surfaces={env.facades} toiture={toitureDef} toitType={toitType} faceKey={selectedFace} faceData={face} dims={dmSel} insts={elevInsts.list} bbox={elevInsts.b} w={effW("elev")} h={panels.elev.h} />
+            <Elevation d={d} murs={env.murs} planchers={env.planchers} surfaces={env.facades} toiture={toitureDef} toitType={toitType} faceKey={selectedFace} faceData={face} dims={dmSel} insts={elevInsts.list} bbox={elevInsts.b} depM={depToitM} w={effW("elev")} h={panels.elev.h} />
           </div>
           <div className="panel-resize" onPointerDown={(e) => startResize(e, "elev", true, false)} title="Agrandir/réduire en hauteur (zoom)" />
         </div>
@@ -1825,7 +1884,7 @@ export default function App() {
           <>
           <div className="reglage-main">
           <Rubrique
-            titre="Type de toiture"
+            titre="Forme de toiture"
             hint="Forme de la toiture du module : monopente, deux pentes (pignon), quatre pentes (croupe) ou terrasse plate. La pente et le faitage s'ajustent automatiquement."
             ouvert={reglageOpen === "formes"}
             onToggle={() => setReglageOpen(reglageOpen === "formes" ? null : "formes")}
@@ -1840,6 +1899,13 @@ export default function App() {
                   detail={`${GEO_LABELS[f.geometrie] || f.geometrie || ""}${f.geometrie === "deuxpentes" ? ` — ${f.pente1 ?? f.pente}° / ${f.pente2 ?? f.pente}°` : f.geometrie && f.geometrie !== "terrasse" ? ` — ${f.pente}°` : ""}`}
                 />
               ))}
+            </div>
+            <div className="field" style={{ marginTop: 8 }}>
+              <label>Débord de toiture (cm)</label>
+              <input type="number" step="0.5" min="0" max="200"
+                value={d.depassee ?? formeDef?.depassee ?? 30}
+                onChange={(e) => set({ depassee: e.target.value === "" ? null : Math.max(0, Math.min(200, parseFloat(e.target.value) || 0)) })} />
+              <span className="config-hint" style={{ marginTop: 0 }}>Débord de la toiture au-delà des murs (surface, élévations). 0 = aucun.</span>
             </div>
           </Rubrique>
           <Rubrique
@@ -1932,7 +1998,7 @@ export default function App() {
 
       {murOpen && (
       <div className="modal-overlay" onClick={() => setMurOpen(false)}>
-      <div className="card modal" onClick={(e) => e.stopPropagation()}>
+      <div className="card modal" style={popStyle} onClick={(e) => e.stopPropagation()}>
         <div className="card-title modal-title">
           <span>{selIsToiture ? "Toiture" : `Mur ${selEdge?.numero ?? "?"}` + (face.actif ? "" : " (charpente)")}</span>
           <button type="button" className="icon-btn danger" onClick={() => setMurOpen(false)} title="Fermer" aria-label="Fermer">
@@ -1980,7 +2046,7 @@ export default function App() {
               // le pent cliqué sur le plan : un revêtement pour ce pent
               (() => {
                 const p = selPent ? pentsAll.find((pp) => pp.instId === selPent.instId && pp.versant === selPent.versant) : null;
-                if (!p) return <p className="config-hint">Cliquez un pent de toiture sur le plan pour choisir son revêtement.</p>;
+                if (!p) return <p className="config-hint">Cliquez un pent de toiture sur le plan pour choisir sa couverture.</p>;
                 return (
                   <div className="fields-grid">
                     <Field label={`Pent ${p.numero} — module ${p.instIndex} (${p.versant}) — ${fmtM2(p.area)}`}>
@@ -2155,14 +2221,25 @@ export default function App() {
               </div>
             ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Plancher</span><span className="chiffrage-surf">{fmtM2(surfaces.plancher)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.plancher)} HT</span></div>
-            <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Toiture</span><span className="chiffrage-surf">{fmtM2(surfaces.toiture)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.toiture)} HT</span></div>
+            <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Complexe de toiture</span><span className="chiffrage-surf">{fmtM2(surfaces.toitureBase)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.toiture)} HT</span></div>
+            <p className="section-label carac-toggle" onClick={() => setPentsBaseOpen((o) => !o)}>
+              <span className={"carac-arrow" + (pentsBaseOpen ? " open" : "")}></span>
+              Détail par pent
+            </p>
+            {pentsBaseOpen && (tarifs.pents || []).map((p) => (
+              <div className="chiffrage-line" key={"b" + p.numero}>
+                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{fmtM2(p.areaBase ?? p.area)}</span></span>
+                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amountBase)} HT</span></span>
+              </div>
+            ))}
+            <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Couverture</span><span className="chiffrage-surf">{fmtM2(surfaces.toiture)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.couverture)} HT</span></div>
             <p className="section-label carac-toggle" onClick={() => setPentsOpen((o) => !o)}>
               <span className={"carac-arrow" + (pentsOpen ? " open" : "")}></span>
               Détail par pent
             </p>
             {pentsOpen && (tarifs.pents || []).map((p) => (
-              <div className="chiffrage-line" key={p.numero}>
-                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{surfaceNom(p.surfaceId)} - {fmtM2(p.area)}</span></span>
+              <div className="chiffrage-line" key={"c" + p.numero}>
+                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{surfaceNom(p.surfaceId)} — {fmtM2(p.area)}</span></span>
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amount)} HT</span></span>
               </div>
             ))}
