@@ -138,9 +138,9 @@ possibles que depuis le back-office (soumissions).
 
 Les catalogues proposés aux clients sont gérés depuis le back-office
 (`admin/configurateur.php`, lien « Configurateur » du menu admin), en trois
-cartes : **Structure** (Modules, Isolation, Formes), **Catalogue** (Charpentes,
-Murs, Planchers, Toitures, Ouvrants) et **Revêtements** (Extérieur, Intérieur,
-Toiture). L'ajout
+cartes : **Structure** (Modules, Isolation, Formes, Autonomie), **Catalogue**
+(Charpentes, Murs, Planchers, Toitures, Ouvrants, systèmes Aut.) et
+**Revêtements** (Extérieur, Intérieur, Toiture). L'ajout
 / la modification d'un élément se fait dans une **boîte
 (modale, descendue de 20 px pour ne pas être cachée par le menu fixe)** :
 bouton « + » à côté du titre de la rubrique, crayon bleu pour modifier,
@@ -176,6 +176,16 @@ referme. Le contenu des pages admin est descendu de 20 px (menu fixe).
   choisit l'ouvrant dans ce catalogue (onglet « Ouvrants ») et
   la positionne sur le mur par pas de 60 cm (flèches « − » / « + »,
   affichage en cm, minimum 7,8 cm — pas de saisie libre).
+- **systèmes Aut.** — systèmes autonomes (panneaux solaires, batterie,
+  poêle, récupération d'eau…) : comme les ouvrants (visuel, nom, dimensions,
+  favori Archicad) avec un **coût unitaire**.
+- **Autonomie** (zone Structure) — packs d'autonomie : chaque élément est
+  une **liste de systèmes autonomes** (cases à cocher vers l'onglet
+  « systèmes Aut. »), avec visuel et « par défaut » possible. Le client
+  choisit un pack dans la rubrique « Autonomie » des réglages généraux
+  (fonctionnement identique à « Performance énergétique") ; le coût du
+  pack = somme des coûts unitaires de ses systèmes, repris dans la ligne
+  « Autonomie » du chiffrage et dans l'export (`module.autonomie`).
 
 Convention de dessin : la **ligne directrice** des murs est à l'intérieur du
 module, l'épaisseur est rejetée vers l'extérieur (plan et élévations, à
@@ -232,20 +242,24 @@ mesure, repris dans l'export JSON (`metriques.tarif`) :
 - **Complexe de toiture** : (coût au m² de la toiture + revêtement
   **intérieur** de la sous-face) × surface des pents **sans débords** ;
 - **Couverture** : coût au m² du revêtement de **toiture** choisi par pent ×
-  surface **avec débords**.
+  surface **avec débords** ;
+- **Autonomie** : somme des **coûts unitaires** des systèmes autonomes du
+  pack choisi (rubrique « Autonomie » des réglages généraux).
 
 Stockage : `data/catalogue/` (JSON, hors git, amorcé automatiquement au
 premier chargement avec les valeurs historiques du configurateur), **un
 fichier par rubrique** : `menuiseries.json`, `modules.json`, `murs.json`,
 `planchers.json`, `surfaces.json` (Extérieur), `interieurs.json` (Intérieur),
-`couvertures.json` (Toiture), `toitures.json` (structure
+`couvertures.json` (Toiture), `toitures.json`, `systemes_aut.json`
+(systèmes autonomes) et `autonomie.json` (packs autonomie) (structure
 `{"items": [...]}` ; l'ancien fichier unique `enveloppe.json` est éclaté
 automatiquement à la première lecture). L'application React lit les
 catalogues en lecture seule via `php/api_catalogue.php` (menuiseries,
-modules, murs/planchers/surfaces/interieurs/couvertures/toitures) ; si l'API
-est indisponible, elle retombe sur les catalogues par défaut définis en tête
-de `src/App.jsx` (`MURS`, `PLANCHERS`, `FACADES`, `INTERIEURS`,
-`COUVERTURES`, `TOITURES`). La géométrie de toiture reste
+modules, murs/planchers/surfaces/interieurs/couvertures/toitures,
+systemes_aut/autonomie) ; si l'API est indisponible, elle retombe sur les
+catalogues par défaut définis en tête de `src/App.jsx` (`MURS`, `PLANCHERS`,
+`FACADES`, `INTERIEURS`, `COUVERTURES`, `TOITURES`, `SYSTEMES_AUT`,
+`AUTONOMIES`). La géométrie de toiture reste
 un vocabulaire fixe (`archicad_catalogue_toiture_types()` : monopente, deux
 pentes, terrasse) — champ `type` des éléments de la rubrique Toitures.
 

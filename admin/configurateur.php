@@ -21,14 +21,15 @@ require_once __DIR__ . '/../includes/catalogue.php';
 archicad_admin_require_auth();
 
 $section = (string) ($_GET['section'] ?? 'modules');
-// Onglets : Modules, Isolation, Formes, Charpentes, Murs, Planchers, Complexe de toiture,
-// Ouvrants, et Revêtements (Extérieur = surfaces, Intérieur, Toiture = couvertures)
+// Onglets : Structure (Modules, Isolation, Formes, Autonomie), Catalogue (Charpentes,
+// Murs, Planchers, Complexe de toiture, Ouvrants, systèmes Aut.), et Revêtements
+// (Extérieur = surfaces, Intérieur, Toiture = couvertures)
 // (l'ancien onglet « enveloppe » est éclaté en sous-onglets)
 if ($section === 'enveloppe') {
     $sous0 = (string) ($_GET['sous'] ?? '');
     $section = in_array($sous0, ['murs', 'planchers', 'toitures', 'surfaces', 'interieurs', 'couvertures'], true) ? $sous0 : 'murs';
 }
-if (!in_array($section, ['modules', 'isolation', 'formes', 'charpentes', 'murs', 'planchers', 'toitures', 'menuiseries', 'surfaces', 'interieurs', 'couvertures'], true)) {
+if (!in_array($section, ['modules', 'isolation', 'formes', 'charpentes', 'autonomie', 'systemes_aut', 'murs', 'planchers', 'toitures', 'menuiseries', 'surfaces', 'interieurs', 'couvertures'], true)) {
     $section = 'modules';
 }
 
@@ -329,6 +330,101 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         cat_redirect('isolation', 'deleted');
     }
 
+    // ----- Systèmes autonomes (onglet « systèmes Aut. », zone Catalogue) -----
+    // À l'identique des ouvrants : visuel, nom, dimensions, favori Archicad,
+    // mais avec un coût UNITAIRE.
+    if ($action === 'save_systeme_aut') {
+        $id = trim((string) ($_POST['id'] ?? ''));
+        $nom = trim((string) ($_POST['nom'] ?? ''));
+        // Saisie en cm (précision mm) — stockage en m
+        $largeur = round(cat_num('largeur') / 100, 3);
+        $hauteur = round(cat_num('hauteur') / 100, 3);
+        $tarif = round(cat_num('tarif'), 2);
+        if ($nom === '' || $largeur <= 0 || $hauteur <= 0) {
+            cat_redirect('systemes_aut', 'invalid');
+        }
+        $item = archicad_catalogue_upsert('systemes_aut', [
+            'nom' => $nom,
+            'largeur' => $largeur,
+            'hauteur' => $hauteur,
+            'favori' => trim((string) ($_POST['favori'] ?? '')),
+            'tarif' => $tarif, // coût unitaire
+        ], $id !== '' ? $id : null);
+        // Visuel (suppression demandée ou nouvel envoi)
+        if (isset($_POST['remove_image']) && (string) ($item['image'] ?? '') !== '') {
+            $fs = archicad_catalogue_image_fs_path((string) $item['image']);
+            if ($fs !== null && is_file($fs)) {
+                unlink($fs);
+            }
+            archicad_catalogue_upsert('systemes_aut', ['image' => ''], (string) $item['id']);
+        }
+        if (isset($_FILES['image']) && is_array($_FILES['image'])) {
+            $stored = archicad_catalogue_store_image($_FILES['image'], (string) $item['id'], 'systemes_aut');
+            if (!$stored['ok']) {
+                cat_redirect('systemes_aut', 'image', (string) $stored['error']);
+            }
+            $old = (string) ($item['image'] ?? '');
+            if ($old !== '' && $old !== $stored['webPath']) {
+                $fs = archicad_catalogue_image_fs_path($old);
+                if ($fs !== null && is_file($fs)) {
+                    unlink($fs);
+                }
+            }
+            archicad_catalogue_upsert('systemes_aut', ['image' => (string) $stored['webPath']], (string) $item['id']);
+        }
+        cat_redirect('systemes_aut', 'saved');
+    }
+    if ($action === 'delete_systeme_aut') {
+        archicad_catalogue_delete('systemes_aut', trim((string) ($_POST['id'] ?? '')));
+        cat_redirect('systemes_aut', 'deleted');
+    }
+
+    // ----- Autonomie (pack = liste de systèmes autonomes, zone Structure) -----
+    if ($action === 'save_autonomie') {
+        $id = trim((string) ($_POST['id'] ?? ''));
+        $nom = trim((string) ($_POST['nom'] ?? ''));
+        if ($nom === '') {
+            cat_redirect('autonomie', 'invalid');
+        }
+        $sysIds = array_column(archicad_load_catalogue('systemes_aut'), 'id');
+        $posted = $_POST['systemes'] ?? [];
+        $posted = is_array($posted) ? $posted : [$posted];
+        // références valides uniquement, sans doublon, ordre conservé
+        $systemes = array_values(array_unique(array_filter(array_map('strval', $posted), fn ($r) => in_array($r, $sysIds, true))));
+        $item = archicad_catalogue_upsert('autonomie', [
+            'nom' => $nom,
+            'systemes' => $systemes,
+        ], $id !== '' ? $id : null);
+        // Visuel (suppression demandée ou nouvel envoi)
+        if (isset($_POST['remove_image']) && (string) ($item['image'] ?? '') !== '') {
+            $fs = archicad_catalogue_image_fs_path((string) $item['image']);
+            if ($fs !== null && is_file($fs)) {
+                unlink($fs);
+            }
+            archicad_catalogue_upsert('autonomie', ['image' => ''], (string) $item['id']);
+        }
+        if (isset($_FILES['image']) && is_array($_FILES['image'])) {
+            $stored = archicad_catalogue_store_image($_FILES['image'], (string) $item['id'], 'autonomie');
+            if (!$stored['ok']) {
+                cat_redirect('autonomie', 'image', (string) $stored['error']);
+            }
+            $old = (string) ($item['image'] ?? '');
+            if ($old !== '' && $old !== $stored['webPath']) {
+                $fs = archicad_catalogue_image_fs_path($old);
+                if ($fs !== null && is_file($fs)) {
+                    unlink($fs);
+                }
+            }
+            archicad_catalogue_upsert('autonomie', ['image' => (string) $stored['webPath']], (string) $item['id']);
+        }
+        cat_save_defaut('autonomie', $item);
+        cat_redirect('autonomie', 'saved');
+    }
+    if ($action === 'delete_autonomie') {
+        archicad_catalogue_delete('autonomie', trim((string) ($_POST['id'] ?? '')));
+        cat_redirect('autonomie', 'deleted');
+    }
+
     // ----- Formes de toiture (géométrie + pente(s)) -----
     if ($action === 'save_forme') {
         $id = trim((string) ($_POST['id'] ?? ''));
@@ -555,6 +651,8 @@ $modules = archicad_load_catalogue('modules');
 $isolations = archicad_load_catalogue('isolation');
 $formes = archicad_load_catalogue('formes');
 $charpentes = archicad_load_catalogue('charpentes');
+$systemesAut = archicad_load_catalogue('systemes_aut');
+$autonomies = archicad_load_catalogue('autonomie');
 $murs = archicad_load_catalogue('murs');
 $planchers = archicad_load_catalogue('planchers');
 $facades = archicad_load_catalogue('surfaces');       // revêtements Extérieur
@@ -570,6 +668,7 @@ $formeGeoLabels = array_column($formeGeometries, 'nom', 'id');
 $murNames = array_column($murs, 'nom', 'id');
 $plancherNames = array_column($planchers, 'nom', 'id');
 $facadeNames = array_column($facades, 'nom', 'id');
+$systemeAutNames = array_column($systemesAut, 'nom', 'id');
 
 $new = isset($_GET['new']);
 $editMenuiserie = null;
@@ -577,6 +676,8 @@ $editModule = null;
 $editIsolation = null;
 $editForme = null;
 $editCharpente = null;
+$editSystemeAut = null;
+$editAutonomie = null;
 $editEnv = ['sous' => '', 'item' => null];
 if (($editId = trim((string) ($_GET['edit'] ?? ''))) !== '') {
     if ($section === 'menuiseries') {
@@ -589,6 +690,10 @@ if (($editId = trim((string) ($_GET['edit'] ?? ''))) !== '') {
         $editForme = archicad_catalogue_find('formes', $editId);
     } elseif ($section === 'charpentes') {
         $editCharpente = archicad_catalogue_find('charpentes', $editId);
+    } elseif ($section === 'systemes_aut') {
+        $editSystemeAut = archicad_catalogue_find('systemes_aut', $editId);
+    } elseif ($section === 'autonomie') {
+        $editAutonomie = archicad_catalogue_find('autonomie', $editId);
     } elseif (in_array($section, cat_enveloppe_kinds(), true)) {
         $sous = $section;
         $editEnv = ['sous' => $sous, 'item' => archicad_catalogue_find($sous, $editId)];
@@ -610,15 +715,16 @@ include __DIR__ . '/../includes/admin-head.php';
     <?php endif; ?>
 
 <?php
-// Trois cartes façon client : Structure (Modules, Isolation, Formes),
-// Catalogue (Charpentes, Murs, Planchers, Complexe de toiture, Ouvrants),
-// Revêtements (Extérieur, Intérieur, Toiture).
+// Trois cartes façon client : Structure (Modules, Isolation, Formes, Autonomie),
+// Catalogue (Charpentes, Murs, Planchers, Complexe de toiture, Ouvrants,
+// systèmes Aut.), Revêtements (Extérieur, Intérieur, Toiture).
 // Chaque carte porte ses sous-onglets ; la rubrique active s'ouvre dans sa carte.
 $groupes = [
     'structure' => ['label' => 'Structure', 'sections' => [
         ['modules', 'Modules', count($modules)],
         ['isolation', 'Isolation', count($isolations)],
         ['formes', 'Formes', count($formes)],
+        ['autonomie', 'Autonomie', count($autonomies)],
     ]],
     'catalogue' => ['label' => 'Catalogue', 'sections' => [
         ['charpentes', 'Charpentes', count($charpentes)],
@@ -626,6 +732,7 @@ $groupes = [
         ['planchers', 'Planchers', count($planchers)],
         ['toitures', 'Complexe de toiture', count($toitures)],
         ['menuiseries', 'Ouvrants', count($menuiseries)],
+        ['systemes_aut', 'systèmes Aut.', count($systemesAut)],
     ]],
     'surfaces' => ['label' => 'Revêtements', 'sections' => [
         ['surfaces', 'Extérieur', count($facades)],
@@ -634,9 +741,9 @@ $groupes = [
     ]],
 ];
 $groupeOf = [
-    'modules' => 'structure', 'isolation' => 'structure', 'formes' => 'structure',
+    'modules' => 'structure', 'isolation' => 'structure', 'formes' => 'structure', 'autonomie' => 'structure',
     'charpentes' => 'catalogue', 'murs' => 'catalogue', 'planchers' => 'catalogue',
-    'toitures' => 'catalogue', 'menuiseries' => 'catalogue',
+    'toitures' => 'catalogue', 'menuiseries' => 'catalogue', 'systemes_aut' => 'catalogue',
     'surfaces' => 'surfaces', 'interieurs' => 'surfaces', 'couvertures' => 'surfaces',
 ];
 $groupeActif = $groupeOf[$section] ?? 'structure';
@@ -752,6 +859,98 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         <div class="admin-actions">
           <button type="submit" class="btn btn-cta">Enregistrer</button>
           <a href="configurateur.php?section=menuiseries" class="btn btn-secondary">Annuler</a>
+        </div>
+      </form>
+    </div>
+    <?php modal_close(); endif; ?>
+
+    <?php elseif ($section === 'systemes_aut'): ?>
+    <div class="admin-card">
+      <h2>systèmes Aut. (<?= count($systemesAut) ?>) <?= cat_btn_add('configurateur.php?section=systemes_aut&new=1', 'Ajouter un système autonome') ?></h2>
+      <p class="admin-hint">Systèmes autonomes (panneaux solaires, batterie, poêle, récupération d'eau…) : comme les ouvrants (visuel, nom, dimensions, référence Archicad) avec un <strong>coût unitaire</strong>. Ils sont regroupés en « packs » dans l'onglet « Autonomie » (zone Structure) ; le client choisit un pack dans la rubrique « Autonomie » du configurateur, et le visuel est affiché.</p>
+      <?php if ($systemesAut === []): ?>
+        <p class="admin-hint">Aucun système autonome dans le catalogue pour le moment.</p>
+      <?php else: ?>
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Visuel</th>
+              <th>Nom</th>
+              <th>Dimensions</th>
+              <th>Référence Archicad</th>
+              <th>Coût unitaire</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($systemesAut as $s): ?>
+              <tr>
+                <td><?= cat_thumb($s) ?></td>
+                <td><strong><?= htmlspecialchars((string) $s['nom']) ?></strong></td>
+                <td><?= cat_cm((float) ($s['largeur'] ?? 0)) ?> × <?= cat_cm((float) ($s['hauteur'] ?? 0)) ?></td>
+                <td><?= ($s['favori'] ?? '') !== '' ? htmlspecialchars((string) $s['favori']) : '—' ?></td>
+                <td><?= cat_eur((float) ($s['tarif'] ?? 0)) ?> €</td>
+                <td class="admin-actions">
+                  <?= cat_action_edit('configurateur.php?section=systemes_aut&edit=' . urlencode((string) $s['id'])) ?>
+                  <?= cat_action_delete('configurateur.php?section=systemes_aut', $csrf, 'delete_systeme_aut', (string) $s['id'], 'Supprimer ce système autonome du catalogue ?') ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
+    </div>
+    <?php if ($editSystemeAut || $new): modal_open('configurateur.php?section=systemes_aut'); ?>
+    <div class="admin-card">
+      <h2><?= $editSystemeAut ? 'Modifier : ' . htmlspecialchars((string) $editSystemeAut['nom']) : 'Ajouter un système autonome' ?></h2>
+      <form method="post" action="configurateur.php?section=systemes_aut" enctype="multipart/form-data">
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+        <input type="hidden" name="action" value="save_systeme_aut">
+        <input type="hidden" name="id" value="<?= htmlspecialchars((string) ($editSystemeAut['id'] ?? '')) ?>">
+        <div class="modal-visual-row">
+          <?php if ($editSystemeAut && ($editSystemeAut['image'] ?? '') !== ''): ?>
+            <img src="../<?= ltrim(htmlspecialchars((string) $editSystemeAut['image']), '/') ?>" alt="" class="modal-visual-img">
+            <label class="admin-hint"><input type="checkbox" name="remove_image" value="1"> Supprimer le visuel</label>
+          <?php endif; ?>
+          <label for="sa-image">Visuel (image)</label>
+          <input type="file" id="sa-image" name="image" accept="image/*">
+          <span class="admin-hint">JPG, PNG, WebP ou GIF — 5 Mo max. Affiché dans le configurateur.</span>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="sa-nom">Nom</label>
+            <input type="text" id="sa-nom" name="nom" required value="<?= htmlspecialchars((string) ($editSystemeAut['nom'] ?? '')) ?>" placeholder="Panneaux solaires 3 kWc">
+          </div>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="sa-largeur">Largeur (cm)</label>
+            <input type="number" id="sa-largeur" name="largeur" step="0.1" min="10" required value="<?= htmlspecialchars($editSystemeAut ? cat_cm_input((float) $editSystemeAut['largeur']) : '100') ?>">
+          </div>
+          <div class="admin-form-row">
+            <label for="sa-hauteur">Hauteur (cm)</label>
+            <input type="number" id="sa-hauteur" name="hauteur" step="0.1" min="10" required value="<?= htmlspecialchars($editSystemeAut ? cat_cm_input((float) $editSystemeAut['hauteur']) : '100') ?>">
+          </div>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="sa-tarif">Coût unitaire (€)</label>
+            <input type="number" id="sa-tarif" name="tarif" step="0.01" min="0" value="<?= htmlspecialchars((string) ($editSystemeAut['tarif'] ?? '0')) ?>">
+          </div>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="sa-favori">Référence Archicad</label>
+            <input type="text" id="sa-favori" name="favori" value="<?= htmlspecialchars((string) ($editSystemeAut['favori'] ?? '')) ?>" placeholder="Nom de la référence Archicad, vide = aucune">
+          </div>
+        </div>
+        <div class="admin-actions">
+          <button type="submit" class="btn btn-cta">Enregistrer</button>
+          <a href="configurateur.php?section=systemes_aut" class="btn btn-secondary">Annuler</a>
         </div>
       </form>
     </div>
@@ -1014,6 +1213,85 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         <div class="admin-actions">
           <button type="submit" class="btn btn-cta">Enregistrer</button>
           <a href="configurateur.php?section=isolation" class="btn btn-secondary">Annuler</a>
+        </div>
+      </form>
+    </div>
+    <?php modal_close(); endif; ?>
+
+    <?php elseif ($section === 'autonomie'): ?>
+    <div class="admin-card">
+      <h2>Autonomie (<?= count($autonomies) ?>) <?= cat_btn_add('configurateur.php?section=autonomie&new=1', 'Ajouter un pack autonomie') ?></h2>
+      <p class="admin-hint">Packs « Autonomie » proposés dans la rubrique « Autonomie » des réglages généraux du configurateur : chaque pack est une <strong>liste de systèmes autonomes</strong> (onglet « systèmes Aut. » de la zone Catalogue). Le coût du pack = somme des coûts unitaires de ses systèmes. Le visuel est affiché dans le configurateur.</p>
+      <?php if ($autonomies === []): ?>
+        <p class="admin-hint">Aucun pack autonomie dans le catalogue pour le moment.</p>
+      <?php else: ?>
+        <table class="admin-table">
+          <thead>
+            <tr><th>Visuel</th><th>Nom</th><th>Systèmes autonomes</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            <?php foreach ($autonomies as $a): ?>
+              <?php $sysNames = array_values(array_filter(array_map(fn ($sid) => $systemeAutNames[$sid] ?? null, is_array($a['systemes'] ?? null) ? $a['systemes'] : []))); ?>
+              <tr>
+                <td><?= cat_thumb($a) ?></td>
+                <td><strong><?= htmlspecialchars((string) $a['nom']) ?></strong><?= !empty($a['defaut']) ? ' <span class="admin-badge-defaut">défaut</span>' : '' ?></td>
+                <td><?= $sysNames ? htmlspecialchars(implode(', ', $sysNames)) : '—' ?></td>
+                <td class="admin-actions">
+                  <?= cat_action_edit('configurateur.php?section=autonomie&edit=' . urlencode((string) $a['id'])) ?>
+                  <?= cat_action_delete('configurateur.php?section=autonomie', $csrf, 'delete_autonomie', (string) $a['id'], 'Supprimer ce pack autonomie du catalogue ?') ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
+    </div>
+    <?php if ($editAutonomie || $new): modal_open('configurateur.php?section=autonomie'); ?>
+    <div class="admin-card">
+      <h2><?= $editAutonomie ? 'Modifier : ' . htmlspecialchars((string) $editAutonomie['nom']) : 'Ajouter un pack autonomie' ?></h2>
+      <form method="post" action="configurateur.php?section=autonomie" enctype="multipart/form-data">
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+        <input type="hidden" name="action" value="save_autonomie">
+        <input type="hidden" name="id" value="<?= htmlspecialchars((string) ($editAutonomie['id'] ?? '')) ?>">
+        <div class="modal-visual-row">
+          <?php if ($editAutonomie && ($editAutonomie['image'] ?? '') !== ''): ?>
+            <img src="../<?= ltrim(htmlspecialchars((string) $editAutonomie['image']), '/') ?>" alt="" class="modal-visual-img">
+            <label class="admin-hint"><input type="checkbox" name="remove_image" value="1"> Supprimer le visuel</label>
+          <?php endif; ?>
+          <label for="au-image">Visuel (image)</label>
+          <input type="file" id="au-image" name="image" accept="image/*">
+          <span class="admin-hint">JPG, PNG, WebP ou GIF — 5 Mo max. Affiché dans le configurateur.</span>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="au-nom">Nom</label>
+            <input type="text" id="au-nom" name="nom" required value="<?= htmlspecialchars((string) ($editAutonomie['nom'] ?? '')) ?>" placeholder="Autonomie standard">
+          </div>
+        </div>
+        <div class="modal-row">
+          <div class="admin-form-row admin-form-check">
+            <label><input type="checkbox" name="defaut" value="1"<?= !empty($editAutonomie['defaut']) ? ' checked' : '' ?>> Élément par défaut (appliqué à la première ouverture du configurateur)</label>
+          </div>
+        </div>
+        <hr class="admin-sep">
+        <div class="admin-form-row">
+          <label>Systèmes autonomes du pack (onglet « systèmes Aut. »)</label>
+          <?php if ($systemesAut === []): ?>
+            <p class="admin-hint">Aucun système autonome dans le catalogue « systèmes Aut. » — créez-en d'abord dans la zone Catalogue.</p>
+          <?php else: ?>
+            <?php $selSys = is_array($editAutonomie['systemes'] ?? null) ? $editAutonomie['systemes'] : []; ?>
+            <?php foreach ($systemesAut as $s): ?>
+              <label class="admin-hint" style="display:flex; gap:6px; align-items:center;">
+                <input type="checkbox" name="systemes[]" value="<?= htmlspecialchars((string) $s['id']) ?>"<?= in_array((string) $s['id'], $selSys, true) ? ' checked' : '' ?>>
+                <?= htmlspecialchars((string) $s['nom']) ?> — <?= cat_cm((float) ($s['largeur'] ?? 0)) ?> × <?= cat_cm((float) ($s['hauteur'] ?? 0)) ?><?= +($s['tarif'] ?? 0) > 0 ? ' — ' . cat_eur((float) $s['tarif']) . ' €' : '' ?>
+              </label>
+            <?php endforeach; ?>
+          <?php endif; ?>
+        </div>
+        <div class="admin-actions">
+          <button type="submit" class="btn btn-cta">Enregistrer</button>
+          <a href="configurateur.php?section=autonomie" class="btn btn-secondary">Annuler</a>
         </div>
       </form>
     </div>

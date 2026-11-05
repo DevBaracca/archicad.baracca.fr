@@ -17,6 +17,8 @@ echo json_encode([
         'menuiseries' => archicad_load_catalogue('menuiseries'),
         'modules' => archicad_load_catalogue('modules'),
         'isolation' => archicad_load_catalogue('isolation'),
+        'systemes_aut' => archicad_load_catalogue('systemes_aut'), // systèmes autonomes (zone Catalogue)
+        'autonomie' => archicad_load_catalogue('autonomie'),       // packs autonomie (zone Structure)
         'formes' => archicad_load_catalogue('formes'),
         'charpentes' => archicad_load_catalogue('charpentes'),
         'enveloppe' => [

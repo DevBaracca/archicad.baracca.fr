@@ -4,14 +4,15 @@
  * Catalogues du configurateur (data/catalogue/, un fichier JSON par rubrique :
  * menuiseries.json, modules.json, isolation.json, formes.json, charpentes.json,
  * murs.json, planchers.json, surfaces.json, interieurs.json, couvertures.json,
- * toitures.json) : menuiseries (baies vitrées, fenêtres, portes — avec visuel),
- * modèles de modules (géométrie prédéfinie uniquement), isolations (type de mur
- * + plancher + toiture), formes de toiture (géométrie, pentes), charpentes, murs,
- * planchers, toitures, et revêtements : « surfaces » = habillage EXTÉRIEUR des
- * murs, « interieurs » = revêtements INTÉRIEURS (murs + sous-face de toiture),
- * « couvertures » = revêtement de TOITURE (par pent, ligne « Couverture »).
- * Chaque élément porte un tarif, additionné par le configurateur pour afficher
- * le tarif global du projet.
+ * toitures.json, systemes_aut.json, autonomie.json) : menuiseries (baies
+ * vitrées, fenêtres, portes — avec visuel), modèles de modules (géométrie
+ * prédéfinie uniquement), isolations (type de mur + plancher + toiture),
+ * formes de toiture (géométrie, pentes), charpentes, murs, planchers, toitures,
+ * revêtements (« surfaces » = EXTÉRIEUR des murs, « interieurs » = INTÉRIEUR,
+ * « couvertures » = TOITURE par pent), systèmes autonomes (« systemes_aut » :
+ * visuel, nom, dimensions, coût unitaire) et « autonomie » (liste de systèmes
+ * autonomes choisie côté client). Chaque élément porte un tarif, additionné
+ * par le configurateur pour afficher le tarif global du projet.
  *
  * Gérés depuis le back-office (admin/configurateur.php), lus par
  * l'application React via php/api_catalogue.php. Au premier chargement,
@@ -23,7 +24,7 @@ require_once __DIR__ . '/../config.php';
 // Chaque kind a son propre fichier JSON dans data/catalogue/ :
 // menuiseries.json, modules.json, isolation.json, formes.json, charpentes.json,
 // murs.json, planchers.json, surfaces.json, interieurs.json, couvertures.json,
-// toitures.json (structure {"items": [...]}).
+// toitures.json, systemes_aut.json, autonomie.json (structure {"items": [...]}).
 function archicad_catalogue_dir(): string
 {
     return ARCHICAD_DATA_DIR . '/catalogue';
@@ -167,6 +168,25 @@ function archicad_catalogue_defaults(string $kind): array
             return [
                 ['id' => 'isolation-standard', 'nom' => 'Isolation standard', 'defaut' => true, 'mur' => (string) ($murs[0]['id'] ?? ''), 'plancher' => (string) ($planchers[0]['id'] ?? ''), 'toiture' => (string) ($toitures[0]['id'] ?? ''), 'image' => '', 'favori' => '', 'created' => $today],
             ];
+        case 'systemes_aut':
+            // Systèmes autonomes (onglet « systèmes Aut. », zone Catalogue) :
+            // à l'identique des ouvrants (visuel, nom, dimensions en m, favori
+            // Archicad) avec un coût UNITAIRE. Regroupés en « packs » dans la
+            // rubrique « Autonomie » (zone Structure).
+            return [
+                ['id' => 'panneaux-3kwc', 'nom' => 'Panneaux solaires 3 kWc', 'largeur' => 1.65, 'hauteur' => 0.99, 'favori' => '', 'tarif' => 0, 'image' => '', 'created' => $today],
+                ['id' => 'batterie-5kwh', 'nom' => 'Batterie de stockage 5 kWh', 'largeur' => 0.80, 'hauteur' => 0.50, 'favori' => '', 'tarif' => 0, 'image' => '', 'created' => $today],
+                ['id' => 'poele-6kw', 'nom' => 'Poêle à granulés 6 kW', 'largeur' => 0.60, 'hauteur' => 0.60, 'favori' => '', 'tarif' => 0, 'image' => '', 'created' => $today],
+                ['id' => 'eau-pluie-5m3', 'nom' => 'Récupération d\'eau de pluie 5 m³', 'largeur' => 1.20, 'hauteur' => 1.00, 'favori' => '', 'tarif' => 0, 'image' => '', 'created' => $today],
+            ];
+        case 'autonomie':
+            // Autonomie (zone Structure) : un « pack » = liste de systèmes
+            // autonomes (références vers le catalogue « systèmes Aut. »),
+            // choisi côté client (rubrique « Autonomie » des réglages généraux)
+            $sys = archicad_load_catalogue('systemes_aut');
+            return [
+                ['id' => 'autonomie-standard', 'nom' => 'Autonomie standard', 'defaut' => true, 'systemes' => array_slice(array_column($sys, 'id'), 0, 2), 'image' => '', 'favori' => '', 'created' => $today],
+            ];
         case 'modules':
             // Un modèle de module définit sa géométrie (longueur, largeur,
             // hauteur sous plafond), son visuel, et pour chaque côté s'il
@@ -275,7 +295,7 @@ function archicad_catalogue_forme_geometries(): array
 // première ouverture du configurateur côté client)
 function archicad_catalogue_defaultable_kinds(): array
 {
-    return ['modules', 'isolation', 'formes', 'charpentes'];
+    return ['modules', 'isolation', 'formes', 'charpentes', 'autonomie'];
 }
 
 /**
@@ -473,6 +493,23 @@ function archicad_load_catalogue(string $kind): array
             }
         }
     }
+    if ($kind === 'autonomie') {
+        // Liste de références valides vers le catalogue « systèmes Aut. » :
+        // les ids inconnus sont retirés, l'ordre et les doublons sont nettoyés
+        $changedAutonomie = false;
+        $sysIds = array_column(archicad_load_catalogue('systemes_aut'), 'id');
+        foreach ($items as $i => $item) {
+            $refs = is_array($item['systemes'] ?? null) ? array_map('strval', $item['systemes']) : [];
+            $valid = array_values(array_unique(array_filter($refs, fn ($r) => in_array($r, $sysIds, true))));
+            if (($item['systemes'] ?? null) !== $valid) {
+                $items[$i]['systemes'] = $valid;
+                $changedAutonomie = true;
+            }
+        }
+        if ($changedAutonomie) {
+            archicad_save_catalogue('autonomie', $items);
+        }
+    }
     if ($kind === 'modules') {
         // Migration : un module ne garde que sa géométrie (nom, longueur,
         // largeur, hauteur, visuel) — forme / enveloppe / pente / pignon sont
@@ -574,6 +611,8 @@ function archicad_catalogue_total_items(): int
         + count(archicad_load_catalogue('surfaces'))
         + count(archicad_load_catalogue('interieurs'))
         + count(archicad_load_catalogue('couvertures'))
+        + count(archicad_load_catalogue('systemes_aut'))
+        + count(archicad_load_catalogue('autonomie'))
         + count(archicad_load_catalogue('toitures'));
 }
 

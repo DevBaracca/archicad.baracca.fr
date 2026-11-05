@@ -36,6 +36,17 @@ const ISOLATIONS = [
 const CHARPENTES = [
   { id: "charpente-tradi", nom: "Charpente traditionnelle", epaisseur: 0.20, rgb: [140, 107, 89], favori: "", tarif: 0, image: "" },
 ];
+// Systèmes autonomes (catalogue « systèmes Aut. » du back-office) : coût unitaire
+const SYSTEMES_AUT = [
+  { id: "panneaux-3kwc", nom: "Panneaux solaires 3 kWc", largeur: 1.65, hauteur: 0.99, favori: "", tarif: 0, image: "" },
+  { id: "batterie-5kwh", nom: "Batterie de stockage 5 kWh", largeur: 0.80, hauteur: 0.50, favori: "", tarif: 0, image: "" },
+  { id: "poele-6kw", nom: "Poêle à granulés 6 kW", largeur: 0.60, hauteur: 0.60, favori: "", tarif: 0, image: "" },
+  { id: "eau-pluie-5m3", nom: "Récupération d'eau de pluie 5 m³", largeur: 1.20, hauteur: 1.00, favori: "", tarif: 0, image: "" },
+];
+// Packs « Autonomie » (catalogue « autonomie ») : liste de systèmes autonomes
+const AUTONOMIES = [
+  { id: "autonomie-standard", nom: "Autonomie standard", defaut: true, systemes: ["panneaux-3kwc", "batterie-5kwh"], image: "" },
+];
 const PLANCHERS = [
   { id: "clt_dalle", nom: "Dalle CLT + chape", epaisseur: 0.30, favori: "" },
   { id: "plancher_bois", nom: "Plancher bois sur lambourdes", epaisseur: 0.24, favori: "" },
@@ -71,6 +82,7 @@ const DEFAULTS = {
   nom: "Baracca_Module_01",
   moduleId: null, // modèle de module choisi dans le catalogue (géométrie seule)
   isolation: null, // isolation choisie (catalogue « isolation » : mur + plancher + toiture)
+  autonomie: null, // pack autonomie choisi (catalogue « autonomie » : liste de systèmes autonomes)
   forme: null, // forme de toiture choisie (catalogue « formes » : géométrie, pentes)
   charpente: null, // charpente choisie (catalogue « charpentes »)
   geometrie: null, // géométrie de la forme : monopente / deuxpentes / quatrepentes
@@ -527,6 +539,12 @@ function tarifTotal(d, env) {
   // Charpente : coût unitaire de la charpente choisie (Réglages généraux) × nb de côtés en charpente
   const charpenteDef = env.charpentes?.find((c) => c.id === d.charpente);
   const charpenteAmount = (charpenteDef ? +charpenteDef.tarif || 0 : 0) * (S.charpentes || 0);
+  // Autonomie : somme des coûts unitaires des systèmes du pack choisi
+  const autoDef = env.autonomies?.find((a) => a.id === d.autonomie);
+  const systemesSel = (autoDef?.systemes || [])
+    .map((sid) => env.systemesAut?.find((s) => s.id === sid))
+    .filter(Boolean);
+  const autonomieAmount = systemesSel.reduce((s, sy) => s + (+sy.tarif || 0), 0);
   const t = {
     module: module ? +module.tarif || 0 : 0,
     mur: murAmount,
@@ -536,8 +554,10 @@ function tarifTotal(d, env) {
     couverture: couvertureAmount,
     menuiseries,
     charpente: charpenteAmount,
+    autonomie: autonomieAmount,
+    autonomieNb: systemesSel.length,
   };
-  t.total = t.module + t.mur + t.plancher + t.facade + t.toiture + t.couverture + t.menuiseries + t.charpente;
+  t.total = t.module + t.mur + t.plancher + t.facade + t.toiture + t.couverture + t.menuiseries + t.charpente + t.autonomie;
   // détail par pent (numéro, revêtements, montants) — couverture : revêtement de toiture choisi
   // × surface avec débords ; complexe : (toiture + revêtement intérieur) × surface sans débords
   t.pents = (S.pents || []).map((p) => {
@@ -610,6 +630,17 @@ function buildExport(d, env) {
       modele: env.modules?.find((m) => m.id === d.moduleId)?.nom ?? null, // modèle de module choisi
       isolation: isoDef ? { id: isoDef.id, nom: isoDef.nom } : null, // isolation choisie (mur + plancher + toiture)
       charpente: (env.charpentes?.find((x) => x.id === d.charpente)) || null, // charpente choisie
+      autonomie: (() => { // pack autonomie choisi : liste de systèmes autonomes
+        const autoDef = env.autonomies?.find((a) => a.id === d.autonomie) || null;
+        if (!autoDef) return null;
+        return {
+          id: autoDef.id, nom: autoDef.nom,
+          systemes: (autoDef.systemes || [])
+            .map((sid) => env.systemesAut?.find((s) => s.id === sid))
+            .filter(Boolean)
+            .map((s) => ({ id: s.id, nom: s.nom, largeur: s.largeur, hauteur: s.hauteur, favori: s.favori ?? "" })),
+        };
+      })(),
       forme: formeDef ? { id: formeDef.id, nom: formeDef.nom } : null, // forme de toiture choisie
       dimensions: { longueur: +spanXm(d, env).toFixed(3), largeur: +spanYm(d, env).toFixed(3), hauteur: d.hauteur }, // cumul de tous les modules
       instances: instancesData, // modules placés côte à côte (grille col/row)
@@ -1387,6 +1418,8 @@ export default function App() {
     menuiseries: catalogue?.menuiseries?.length ? catalogue.menuiseries : null,
     modules: catalogue?.modules?.length ? catalogue.modules : null,
     isolations: catalogue?.isolation?.length ? catalogue.isolation : ISOLATIONS,
+    systemesAut: catalogue?.systemes_aut?.length ? catalogue.systemes_aut : SYSTEMES_AUT, // systèmes autonomes
+    autonomies: catalogue?.autonomie?.length ? catalogue.autonomie : AUTONOMIES, // packs autonomie
     formes: catalogue?.formes?.length ? catalogue.formes : FORMES,
     charpentes: catalogue?.charpentes?.length ? catalogue.charpentes : CHARPENTES,
     toitures: catalogue?.toitures?.length ? catalogue.toitures : TOITURES,
@@ -1539,6 +1572,17 @@ export default function App() {
   const applyCharpente = (id) => {
     set(env.charpentes?.some((x) => x.id === id) ? { charpente: id } : { charpente: null });
   };
+
+  /* Choix du pack autonomie (rubrique « Autonomie » des réglages généraux) :
+     liste de systèmes autonomes du catalogue « autonomie » */
+  const applyAutonomie = (id) => {
+    set(env.autonomies?.some((a) => a.id === id) ? { autonomie: id } : { autonomie: null });
+  };
+  // systèmes autonomes du pack choisi (pour affichage + chiffrage)
+  const autoSel = env.autonomies?.find((a) => a.id === d.autonomie) || null;
+  const systemesOf = (auto) => (auto?.systemes || [])
+    .map((sid) => env.systemesAut?.find((s) => s.id === sid))
+    .filter(Boolean);
 
   /* Choix de la forme de toiture (onglet Formes) : géométrie + pente(s) */
   const applyForme = (id) => {
@@ -1749,6 +1793,8 @@ export default function App() {
         }
         const chDef = defOf(catalogue.charpentes);
         if (chDef && !prev.charpente) patch.charpente = chDef.id;
+        const auDef = defOf(catalogue.autonomie);
+        if (auDef && !prev.autonomie) patch.autonomie = auDef.id;
       }
       return Object.keys(patch).length ? { ...prev, ...patch } : prev;
     });
@@ -1979,6 +2025,24 @@ export default function App() {
                   image={iso.image}
                   nom={iso.nom}
                   detail={`${env.murs.find((x) => x.id === iso.mur)?.nom || "—"} / ${env.planchers.find((p) => p.id === iso.plancher)?.nom || "—"} / ${env.toitures.find((t) => t.id === iso.toiture)?.nom || "—"}`}
+                />
+              ))}
+            </div>
+          </Rubrique>
+          <Rubrique
+            titre="Autonomie"
+            hint="Pack de systèmes autonomes (panneaux solaires, batterie, poêle, récupération d'eau…) : le coût du pack est la somme des coûts unitaires de ses systèmes."
+            ouvert={reglageOpen === "autonomie"}
+            onToggle={() => setReglageOpen(reglageOpen === "autonomie" ? null : "autonomie")}
+          >
+            <div className="choix-list">
+              {(env.autonomies || []).map((a) => (
+                <Choix key={a.id}
+                  checked={d.autonomie === a.id}
+                  onChange={() => applyAutonomie(a.id)}
+                  image={a.image}
+                  nom={a.nom}
+                  detail={systemesOf(a).map((s) => s.nom).join(", ") || "—"}
                 />
               ))}
             </div>
@@ -2332,6 +2396,7 @@ export default function App() {
             ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Ouvrants ({surfaces.ouvrants})</span></span><span className="chiffrage-v">{fmtEur(tarifs.menuiseries)} HT</span></div>
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Charpente ({surfaces.charpentes})</span></span><span className="chiffrage-v">{fmtEur(tarifs.charpente)} HT</span></div>
+            <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Autonomie ({tarifs.autonomieNb ?? 0} système{(tarifs.autonomieNb ?? 0) > 1 ? "s" : ""})</span><span className="chiffrage-surf">{autoSel?.nom || "—"}</span></span><span className="chiffrage-v">{fmtEur(tarifs.autonomie)} HT</span></div>
           </div>
           )}
           <div className={"chiffrage-total" + (chiffrageCardOpen ? "" : " solo")}>
