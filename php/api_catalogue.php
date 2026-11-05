@@ -18,6 +18,8 @@ echo json_encode([
         'modules' => archicad_load_catalogue('modules'),
         'isolation' => archicad_load_catalogue('isolation'),
         'systemes_aut' => archicad_load_catalogue('systemes_aut'), // systèmes autonomes (zone Catalogue)
+        'fenetres_toit' => archicad_load_catalogue('fenetres_toit'), // fenêtres de toit (zone Catalogue)
+        'promotions' => archicad_load_catalogue('promotions'),       // codes promo (zone Structure)
         'autonomie' => archicad_load_catalogue('autonomie'),       // packs autonomie (zone Structure)
         'formes' => archicad_load_catalogue('formes'),
         'charpentes' => archicad_load_catalogue('charpentes'),

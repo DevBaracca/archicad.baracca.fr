@@ -22,14 +22,14 @@ archicad_admin_require_auth();
 
 $section = (string) ($_GET['section'] ?? 'modules');
 // Onglets : Structure (Modules, Isolation, Formes, Autonomie), Catalogue (Charpentes,
-// Murs, Planchers, Complexe de toiture, Ouvrants, systèmes Aut.), et Revêtements
-// (Extérieur = surfaces, Intérieur, Toiture = couvertures)
+// Murs, Planchers, Complexe de toiture, Ouvrants, Fenêtres de toit, systèmes Aut.),
+// et Revêtements (Extérieur = surfaces, Intérieur, Toiture = couvertures)
 // (l'ancien onglet « enveloppe » est éclaté en sous-onglets)
 if ($section === 'enveloppe') {
     $sous0 = (string) ($_GET['sous'] ?? '');
     $section = in_array($sous0, ['murs', 'planchers', 'toitures', 'surfaces', 'interieurs', 'couvertures'], true) ? $sous0 : 'murs';
 }
-if (!in_array($section, ['modules', 'isolation', 'formes', 'charpentes', 'autonomie', 'systemes_aut', 'murs', 'planchers', 'toitures', 'menuiseries', 'surfaces', 'interieurs', 'couvertures'], true)) {
+if (!in_array($section, ['modules', 'isolation', 'formes', 'charpentes', 'autonomie', 'promotions', 'systemes_aut', 'fenetres_toit', 'murs', 'planchers', 'toitures', 'menuiseries', 'surfaces', 'interieurs', 'couvertures'], true)) {
     $section = 'modules';
 }
 
@@ -488,6 +488,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         cat_redirect('autonomie', 'deleted');
     }
 
+    // ----- Promotions (onglet « Promotions », zone Structure) -----
+    // Code + période (dateDebut/dateFin incluses) + réduction (%) + modules
+    // auxquels la promotion est affectée.
+    if ($action === 'save_promotion') {
+        $id = trim((string) ($_POST['id'] ?? ''));
+        $code = strtoupper(trim((string) ($_POST['code'] ?? '')));
+        $dateDebut = (string) ($_POST['dateDebut'] ?? '');
+        $dateFin = (string) ($_POST['dateFin'] ?? '');
+        $reduction = max(0, min(100, round(cat_num('reduction'), 2)));
+        $dateOk = fn (string $d) => (bool) preg_match('/^\d{4}-\d{2}-\d{2}$/', $d);
+        if ($code === '' || !$dateOk($dateDebut) || !$dateOk($dateFin) || $dateDebut > $dateFin) {
+            cat_redirect('promotions', 'invalid');
+        }
+        $modIds = array_column(archicad_load_catalogue('modules'), 'id');
+        $posted = $_POST['modules'] ?? [];
+        $posted = is_array($posted) ? $posted : [$posted];
+        $modules = array_values(array_unique(array_filter(array_map('strval', $posted), fn ($r) => in_array($r, $modIds, true))));
+        archicad_catalogue_upsert('promotions', [
+            'code' => $code,
+            'dateDebut' => $dateDebut,
+            'dateFin' => $dateFin,
+            'reduction' => $reduction,
+            'modules' => $modules,
+        ], $id !== '' ? $id : null);
+        cat_redirect('promotions', 'saved');
+    }
+    if ($action === 'delete_promotion') {
+        archicad_catalogue_delete('promotions', trim((string) ($_POST['id'] ?? '')));
+        cat_redirect('promotions', 'deleted');
+    }
+
     // ----- Formes de toiture (géométrie + pente(s)) -----
     if ($action === 'save_forme') {
         $id = trim((string) ($_POST['id'] ?? ''));
@@ -716,6 +747,8 @@ $formes = archicad_load_catalogue('formes');
 $charpentes = archicad_load_catalogue('charpentes');
 $systemesAut = archicad_load_catalogue('systemes_aut');
 $autonomies = archicad_load_catalogue('autonomie');
+$fenetresToit = archicad_load_catalogue('fenetres_toit');
+$promotions = archicad_load_catalogue('promotions');
 $murs = archicad_load_catalogue('murs');
 $planchers = archicad_load_catalogue('planchers');
 $facades = archicad_load_catalogue('surfaces');       // revêtements Extérieur
@@ -732,6 +765,7 @@ $murNames = array_column($murs, 'nom', 'id');
 $plancherNames = array_column($planchers, 'nom', 'id');
 $facadeNames = array_column($facades, 'nom', 'id');
 $systemeAutNames = array_column($systemesAut, 'nom', 'id');
+$moduleNames = array_column($modules, 'nom', 'id');
 
 $new = isset($_GET['new']);
 $editMenuiserie = null;
@@ -741,10 +775,14 @@ $editForme = null;
 $editCharpente = null;
 $editSystemeAut = null;
 $editAutonomie = null;
+$editFenetreToit = null;
+$editPromotion = null;
 $editEnv = ['sous' => '', 'item' => null];
 if (($editId = trim((string) ($_GET['edit'] ?? ''))) !== '') {
     if ($section === 'menuiseries') {
         $editMenuiserie = archicad_catalogue_find('menuiseries', $editId);
+    } elseif ($section === 'fenetres_toit') {
+        $editFenetreToit = archicad_catalogue_find('fenetres_toit', $editId);
     } elseif ($section === 'modules') {
         $editModule = archicad_catalogue_find('modules', $editId);
     } elseif ($section === 'isolation') {
@@ -757,6 +795,8 @@ if (($editId = trim((string) ($_GET['edit'] ?? ''))) !== '') {
         $editSystemeAut = archicad_catalogue_find('systemes_aut', $editId);
     } elseif ($section === 'autonomie') {
         $editAutonomie = archicad_catalogue_find('autonomie', $editId);
+    } elseif ($section === 'promotions') {
+        $editPromotion = archicad_catalogue_find('promotions', $editId);
     } elseif (in_array($section, cat_enveloppe_kinds(), true)) {
         $sous = $section;
         $editEnv = ['sous' => $sous, 'item' => archicad_catalogue_find($sous, $editId)];
@@ -805,9 +845,9 @@ $groupes = [
     ]],
 ];
 $groupeOf = [
-    'modules' => 'structure', 'isolation' => 'structure', 'formes' => 'structure', 'autonomie' => 'structure',
+    'modules' => 'structure', 'isolation' => 'structure', 'formes' => 'structure', 'autonomie' => 'structure', 'promotions' => 'structure',
     'charpentes' => 'catalogue', 'murs' => 'catalogue', 'planchers' => 'catalogue',
-    'toitures' => 'catalogue', 'menuiseries' => 'catalogue', 'systemes_aut' => 'catalogue',
+    'toitures' => 'catalogue', 'menuiseries' => 'catalogue', 'fenetres_toit' => 'catalogue', 'systemes_aut' => 'catalogue',
     'surfaces' => 'surfaces', 'interieurs' => 'surfaces', 'couvertures' => 'surfaces',
 ];
 $groupeActif = $groupeOf[$section] ?? 'structure';
@@ -819,6 +859,19 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         <?php foreach ($g['sections'] as [$s, $label, $nb]): ?>
         <a href="configurateur.php?section=<?= $s ?>"<?= $section === $s ? ' class="active"' : '' ?>><?= $label ?> (<?= $nb ?>)</a>
         <?php endforeach; ?>
+        <?php if ($groupeActif === $gkey && $gkey === 'structure'): // onglet « Promotions » épinglé à droite de la ligne des onglets ?>
+        <a href="configurateur.php?section=promotions" style="margin-left:auto"<?= $section === 'promotions' ? ' class="active"' : '' ?>>Promotions (<?= count($promotions) ?>)</a>
+        <?php endif; ?>
+        <?php if ($groupeActif === $gkey && in_array($section, archicad_marge_kinds(), true)): // champ Marge fixé à droite de la ligne des onglets ?>
+        <form method="post" action="configurateur.php?section=<?= $section ?>" class="admin-marge-form" title="Coefficient de marge appliqué au chiffrage client pour cette rubrique (1 = aucune marge, 1,15 = +15 %)">
+          <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+          <input type="hidden" name="action" value="save_marge">
+          <input type="hidden" name="kind" value="<?= $section ?>">
+          <label for="marge-input">Marge</label>
+          <input type="number" id="marge-input" name="marge" step="0.01" min="0" value="<?= htmlspecialchars((string) archicad_marge_get($section)) ?>">
+          <button type="submit" class="btn small">OK</button>
+        </form>
+        <?php endif; ?>
       </nav>
       <?php if ($groupeActif === $gkey): ?>
 
@@ -1448,6 +1501,89 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         <div class="admin-actions">
           <button type="submit" class="btn btn-cta">Enregistrer</button>
           <a href="configurateur.php?section=autonomie" class="btn btn-secondary">Annuler</a>
+        </div>
+      </form>
+    </div>
+    <?php modal_close(); endif; ?>
+
+    <?php elseif ($section === 'promotions'): ?>
+    <?php $today = date('Y-m-d'); ?>
+    <div class="admin-card">
+      <h2>Promotions (<?= count($promotions) ?>) <?= cat_btn_add('configurateur.php?section=promotions&new=1', 'Ajouter une promotion') ?></h2>
+      <p class="admin-hint">Codes promotionnels (zone Structure, onglet épinglé à droite) : un <strong>code</strong>, une <strong>période</strong> (date de début et de fin, incluses) et une <strong>réduction en %</strong>, affectée à un ou plusieurs <strong>modules</strong>. Côté client, le code saisi dans la rubrique « Promotion » des réglages généraux applique la réduction, tant que la date du jour est dans la période, aux <strong>éléments des modules concernés</strong> (murs, plancher, toitures, couverture, ouvrants, charpente, fenêtres de toit — le module lui-même n'a pas de tarif).</p>
+      <?php if ($promotions === []): ?>
+        <p class="admin-hint">Aucune promotion pour le moment.</p>
+      <?php else: ?>
+        <table class="admin-table">
+          <thead>
+            <tr><th>Code</th><th>Période</th><th>Réduction</th><th>Modules affectés</th><th>Statut</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            <?php foreach ($promotions as $p): ?>
+              <?php $mods = array_values(array_filter(array_map(fn ($mid) => $moduleNames[$mid] ?? null, is_array($p['modules'] ?? null) ? $p['modules'] : []))); ?>
+              <?php $active = ($p['dateDebut'] ?? '') <= $today && $today <= ($p['dateFin'] ?? ''); ?>
+              <tr>
+                <td><strong><?= htmlspecialchars((string) $p['code']) ?></strong></td>
+                <td>du <?= htmlspecialchars((string) $p['dateDebut']) ?> au <?= htmlspecialchars((string) $p['dateFin']) ?></td>
+                <td>−<?= htmlspecialchars((string) $p['reduction']) ?> %</td>
+                <td><?= $mods ? htmlspecialchars(implode(', ', $mods)) : '—' ?></td>
+                <td><?= $active ? '<span class="admin-badge-defaut">active</span>' : 'inactive' ?></td>
+                <td class="admin-actions">
+                  <?= cat_action_edit('configurateur.php?section=promotions&edit=' . urlencode((string) $p['id'])) ?>
+                  <?= cat_action_delete('configurateur.php?section=promotions', $csrf, 'delete_promotion', (string) $p['id'], 'Supprimer cette promotion ?') ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
+    </div>
+    <?php if ($editPromotion || $new): modal_open('configurateur.php?section=promotions'); ?>
+    <div class="admin-card">
+      <h2><?= $editPromotion ? 'Modifier : ' . htmlspecialchars((string) $editPromotion['code']) : 'Ajouter une promotion' ?></h2>
+      <form method="post" action="configurateur.php?section=promotions">
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+        <input type="hidden" name="action" value="save_promotion">
+        <input type="hidden" name="id" value="<?= htmlspecialchars((string) ($editPromotion['id'] ?? '')) ?>">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="pr-code">Code promotion</label>
+            <input type="text" id="pr-code" name="code" required value="<?= htmlspecialchars((string) ($editPromotion['code'] ?? '')) ?>" placeholder="BARACCA10" style="text-transform:uppercase">
+          </div>
+          <div class="admin-form-row">
+            <label for="pr-reduction">Réduction (%)</label>
+            <input type="number" id="pr-reduction" name="reduction" step="0.5" min="0" max="100" required value="<?= htmlspecialchars((string) ($editPromotion['reduction'] ?? '10')) ?>">
+          </div>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="pr-debut">Date de début</label>
+            <input type="date" id="pr-debut" name="dateDebut" required value="<?= htmlspecialchars((string) ($editPromotion['dateDebut'] ?? $today)) ?>">
+          </div>
+          <div class="admin-form-row">
+            <label for="pr-fin">Date de fin (incluse)</label>
+            <input type="date" id="pr-fin" name="dateFin" required value="<?= htmlspecialchars((string) ($editPromotion['dateFin'] ?? date('Y-m-d', strtotime('+30 days')))) ?>">
+          </div>
+        </div>
+        <hr class="admin-sep">
+        <div class="admin-form-row">
+          <label>Modules auxquels la promotion est affectée</label>
+          <?php if ($modules === []): ?>
+            <p class="admin-hint">Aucun module dans le catalogue — créez-en d'abord dans l'onglet « Modules ».</p>
+          <?php else: ?>
+            <?php $selMods = is_array($editPromotion['modules'] ?? null) ? $editPromotion['modules'] : []; ?>
+            <?php foreach ($modules as $m): ?>
+              <label class="admin-hint" style="display:flex; gap:6px; align-items:center;">
+                <input type="checkbox" name="modules[]" value="<?= htmlspecialchars((string) $m['id']) ?>"<?= in_array((string) $m['id'], $selMods, true) ? ' checked' : '' ?>>
+                <?= htmlspecialchars((string) $m['nom']) ?> — <?= cat_cm((float) $m['longueur']) ?> × <?= cat_cm((float) $m['largeur']) ?> cm
+              </label>
+            <?php endforeach; ?>
+          <?php endif; ?>
+        </div>
+        <div class="admin-actions">
+          <button type="submit" class="btn btn-cta">Enregistrer</button>
+          <a href="configurateur.php?section=promotions" class="btn btn-secondary">Annuler</a>
         </div>
       </form>
     </div>

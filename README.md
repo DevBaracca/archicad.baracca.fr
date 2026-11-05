@@ -138,9 +138,10 @@ possibles que depuis le back-office (soumissions).
 
 Les catalogues proposés aux clients sont gérés depuis le back-office
 (`admin/configurateur.php`, lien « Configurateur » du menu admin), en trois
-cartes : **Structure** (Modules, Isolation, Formes, Autonomie), **Catalogue**
-(Charpentes, Murs, Planchers, Toitures, Ouvrants, systèmes Aut.) et
-**Revêtements** (Extérieur, Intérieur, Toiture). L'ajout
+cartes : **Structure** (Modules, Isolation, Formes, Autonomie, + onglet
+**Promotions** épinglé à droite de la ligne des onglets), **Catalogue**
+(Charpentes, Murs, Planchers, Toitures, Ouvrants, Fenêtres de toit, systèmes
+Aut.) et **Revêtements** (Extérieur, Intérieur, Toiture). L'ajout
 / la modification d'un élément se fait dans une **boîte
 (modale, descendue de 20 px pour ne pas être cachée par le menu fixe)** :
 bouton « + » à côté du titre de la rubrique, crayon bleu pour modifier,
@@ -195,6 +196,31 @@ referme. Le contenu des pages admin est descendu de 20 px (menu fixe).
   (fonctionnement identique à « Performance énergétique") ; le coût du
   pack = somme des coûts unitaires de ses systèmes, repris dans la ligne
   « Autonomie » du chiffrage et dans l'export (`module.autonomie`).
+- **Promotions** (zone Structure, onglet épinglé à droite, `promotions.json`) —
+  codes promotionnels : **code**, **période** (date de début / de fin,
+  incluses), **réduction en %** et **modules auxquels la promotion est
+  affectée** (cases à cocher). Côté client, une rubrique « Promotion » des
+  réglages généraux permet de saisir le code : s'il est actif (date du jour
+  dans la période) et affecté à un module utilisé, la réduction s'applique
+  aux **éléments de ces modules** (murs, plancher et façade au prorata des
+  surfaces, complexe de toiture, couverture, ouvrants, charpente, fenêtres
+  de toit — le module lui-même n'a pas de tarif, et l'autonomie n'est pas
+  concernée) — ligne « Promotion » (négative, avec sa base HT) au chiffrage,
+  `metriques.tarif.promo` / `promoBase` et `metriques.promotion` dans l'export.
+
+**Marge par rubrique** (zones Catalogue et Revêtements) : chaque onglet de ces
+deux zones porte un champ « Marge » (coefficient, **1 par défaut** = aucune
+marge, 1,15 = +15 %), saisi à droite de la ligne des onglets et stocké dans
+`data/catalogue/marges.json`. Côté client, le chiffrage applique ce coefficient
+au prix de chaque élément utilisé, selon son onglet : murs × marge « Murs »,
+revêtement extérieur × marge « Extérieur », intérieur × marge « Intérieur »,
+plancher × marge « Planchers », complexe de toiture × marge « Toitures »,
+couverture × marge « Toiture » (couvertures), ouvrants × marge « Ouvrants »,
+fenêtres de toit × marge « Fenêtres de toit », charpente × marge « Charpentes »,
+systèmes autonomie × marge « systèmes Aut. ». Les rubriques de la zone
+Structure (modules, isolation, formes, autonomie) n'ont pas de marge. Les
+marges sont servies par `php/api_catalogue.php` (`marges`) et reprises dans
+`metriques.tarif` de l'export.
 
 Convention de dessin : la **ligne directrice** des murs est à l'intérieur du
 module, l'épaisseur est rejetée vers l'extérieur (plan et élévations, à

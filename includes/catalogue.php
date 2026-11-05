@@ -199,6 +199,12 @@ function archicad_catalogue_defaults(string $kind): array
             return [
                 ['id' => 'autonomie-standard', 'nom' => 'Autonomie standard', 'defaut' => true, 'systemes' => array_slice(array_column($sys, 'id'), 0, 2), 'image' => '', 'favori' => '', 'created' => $today],
             ];
+        case 'promotions':
+            // Promotions (onglet « Promotions », zone Structure) : code, période
+            // (dateDebut/dateFin, inclus), réduction en % et liste de modules
+            // auxquels la promotion est affectée. Pas de visuel, pas de tarif.
+            // Aucune promotion par défaut.
+            return [];
         case 'modules':
             // Un modèle de module définit sa géométrie (longueur, largeur,
             // hauteur sous plafond), son visuel, et pour chaque côté s'il

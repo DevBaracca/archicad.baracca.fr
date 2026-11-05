@@ -89,6 +89,7 @@ const DEFAULTS = {
   moduleId: null, // modèle de module choisi dans le catalogue (géométrie seule)
   isolation: null, // isolation choisie (catalogue « isolation » : mur + plancher + toiture)
   autonomie: null, // pack autonomie choisi (catalogue « autonomie » : liste de systèmes autonomes)
+  promoCode: "", // code promotion saisi par le client (rubrique « Promotion »)
   forme: null, // forme de toiture choisie (catalogue « formes » : géométrie, pentes)
   charpente: null, // charpente choisie (catalogue « charpentes »)
   geometrie: null, // géométrie de la forme : monopente / deuxpentes / quatrepentes
@@ -701,10 +702,12 @@ function buildExport(d, env) {
       surfaceToiture: +surfaceToitureTotale(d, env, toitType).toFixed(2),
       surfaceMenuiserie: +eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).reduce((s, e) => s + surfaceMenuiserie(e.a || {}) + surfaceMenuiserie(e.b || {}), 0).toFixed(2),
       volumeBrut: +insts.reduce((s, i) => { const dm = dimsOf(d, env, i); return s + dm.longueur * dm.largeur * dm.hauteur; }, 0).toFixed(2),
-      // Ajout rétro-compatible : détail des tarifs (catalogue back-office)
+      // Ajout rétro-compatible : détail des tarifs (catalogue back-office, marges appliquées)
       tarif: Object.fromEntries(
-        Object.entries(tarifTotal(d, env)).filter(([k]) => k !== "pents").map(([k, v]) => [k, +v.toFixed(2)])
+        Object.entries(tarifTotal(d, env)).filter(([k, v]) => k !== "pents" && typeof v === "number").map(([k, v]) => [k, +v.toFixed(2)])
       ),
+      // promotion active (code saisi côté client) : null si aucune
+      promotion: (() => { const p = promoActive(d, env); return p ? { code: p.code, reduction: +p.reduction } : null; })(),
     },
   };
 }
@@ -1546,6 +1549,16 @@ export default function App() {
   const tarifs = useMemo(() => tarifTotal(d, env), [d, catalogue]); // eslint-disable-line react-hooks/exhaustive-deps
   const surfaces = useMemo(() => surfacesChiffrage(d, env), [d, catalogue]); // eslint-disable-line react-hooks/exhaustive-deps
   const pentsAll = pentsOf(d, env); // pents numérotés de tous les modules
+  // Indice de validité du code promotion saisi (rubrique « Promotion »)
+  const promo = promoActive(d, env);
+  const promoCodeSaisi = String(d.promoCode || "").trim();
+  const promoHint = !promoCodeSaisi
+    ? "Saisissez le code reçu par e-mail pour bénéficier de la promotion."
+    : promo
+      ? `Promotion « ${promo.code} » active : −${promo.reduction} % sur les éléments des modules concernés (murs, toiture, ouvrants…).`
+      : (env.promotions || []).some((p) => String(p.code || "").trim().toLowerCase() === promoCodeSaisi.toLowerCase())
+        ? "Code connu, mais hors période ou non affecté au module choisi."
+        : "Code inconnu.";
   // Modules affichés en élévation pour la face choisie : tous les modules,
   // avec leur profondeur par rapport à la face (pour l'occlusion) et la bbox
   // de l'ensemble (pour la projection horizontale de la façade)
@@ -2212,6 +2225,20 @@ export default function App() {
                   detail={`ép. ${fmtCm(+(c.epaisseur ?? 0.20))} cm${+c.tarif > 0 ? ` — ${fmtEur(c.tarif)} HT` : ""}`}
                 />
               ))}
+            </div>
+          </Rubrique>
+          <Rubrique
+            titre="Promotion"
+            hint="Saisissez un code promotionnel : s'il est actif (date du jour dans la période) et affecté au module choisi, la réduction s'applique au prix du module dans le chiffrage."
+            ouvert={reglageOpen === "promo"}
+            onToggle={() => setReglageOpen(reglageOpen === "promo" ? null : "promo")}
+          >
+            <div className="field">
+              <label>Code promotion</label>
+              <input type="text" value={d.promoCode || ""} placeholder="CODE"
+                style={{ textTransform: "uppercase" }}
+                onChange={(e) => set({ promoCode: e.target.value })} />
+              <span className="config-hint" style={{ marginTop: 0 }}>{promoHint}</span>
             </div>
           </Rubrique>
           </div>
