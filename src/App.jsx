@@ -578,7 +578,6 @@ function buildExport(d, env) {
         geometrie: toitType, // monopente / deuxpentes / quatrepentes / terrasse
         forme: formeDef ? { id: formeDef.id, nom: formeDef.nom } : null, // forme de toiture du module (catalogue « formes »)
         favori: toitureDef.favori ?? "", // favori Archicad pour la toiture
-        surface: (env.facades.find((f) => f.id === (d.surfaceToiture ?? toitureDef.surface)) || env.facades[0]).nom, // surface par défaut (rétro-compat)
         pents: pentsOf(d, env).map((p) => ({
           numero: p.numero, module: p.instIndex, versant: p.versant,
           surface: (env.facades.find((f) => f.id === p.surfaceId) || env.facades[0]).nom,
