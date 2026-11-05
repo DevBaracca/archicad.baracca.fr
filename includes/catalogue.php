@@ -4,7 +4,8 @@
  * Catalogues du configurateur (data/catalogue/, un fichier JSON par rubrique :
  * menuiseries.json, modules.json, isolation.json, formes.json, charpentes.json,
  * murs.json, planchers.json, surfaces.json, interieurs.json, couvertures.json,
- * toitures.json, systemes_aut.json, autonomie.json) : menuiseries (baies
+ * toitures.json, systemes_aut.json, autonomie.json, fenetres_toit.json) :
+ * menuiseries (baies
  * vitrées, fenêtres, portes — avec visuel), modèles de modules (géométrie
  * prédéfinie uniquement), isolations (type de mur + plancher + toiture),
  * formes de toiture (géométrie, pentes), charpentes, murs, planchers, toitures,
@@ -24,7 +25,8 @@ require_once __DIR__ . '/../config.php';
 // Chaque kind a son propre fichier JSON dans data/catalogue/ :
 // menuiseries.json, modules.json, isolation.json, formes.json, charpentes.json,
 // murs.json, planchers.json, surfaces.json, interieurs.json, couvertures.json,
-// toitures.json, systemes_aut.json, autonomie.json (structure {"items": [...]}).
+// toitures.json, systemes_aut.json, autonomie.json, fenetres_toit.json
+// (structure {"items": [...]}).
 function archicad_catalogue_dir(): string
 {
     return ARCHICAD_DATA_DIR . '/catalogue';
@@ -167,6 +169,16 @@ function archicad_catalogue_defaults(string $kind): array
             $toitures = archicad_load_catalogue('toitures');
             return [
                 ['id' => 'isolation-standard', 'nom' => 'Isolation standard', 'defaut' => true, 'mur' => (string) ($murs[0]['id'] ?? ''), 'plancher' => (string) ($planchers[0]['id'] ?? ''), 'toiture' => (string) ($toitures[0]['id'] ?? ''), 'image' => '', 'favori' => '', 'created' => $today],
+            ];
+        case 'fenetres_toit':
+            // Fenêtres de toit (onglet « Fenêtres de toit », zone Catalogue) :
+            // à l'identique des ouvrants (visuel, nom, dimensions en m, favori
+            // Archicad, coût unitaire), posées sur les pents de toiture côté
+            // client et symbolisées par un cadre en pointillé sur le plan.
+            return [
+                ['id' => 'velux-78x98', 'nom' => 'Fenêtre de toit 0,78 × 0,98 m', 'largeur' => 0.78, 'hauteur' => 0.98, 'favori' => '', 'tarif' => 0, 'image' => '', 'created' => $today],
+                ['id' => 'velux-114x118', 'nom' => 'Fenêtre de toit 1,14 × 1,18 m', 'largeur' => 1.14, 'hauteur' => 1.18, 'favori' => '', 'tarif' => 0, 'image' => '', 'created' => $today],
+                ['id' => 'puits-lumiere-100', 'nom' => 'Puits de lumière 1,00 × 1,00 m', 'largeur' => 1.00, 'hauteur' => 1.00, 'favori' => '', 'tarif' => 0, 'image' => '', 'created' => $today],
             ];
         case 'systemes_aut':
             // Systèmes autonomes (onglet « systèmes Aut. », zone Catalogue) :
@@ -613,6 +625,7 @@ function archicad_catalogue_total_items(): int
         + count(archicad_load_catalogue('couvertures'))
         + count(archicad_load_catalogue('systemes_aut'))
         + count(archicad_load_catalogue('autonomie'))
+        + count(archicad_load_catalogue('fenetres_toit'))
         + count(archicad_load_catalogue('toitures'));
 }
 

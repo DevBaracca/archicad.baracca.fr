@@ -176,6 +176,15 @@ referme. Le contenu des pages admin est descendu de 20 px (menu fixe).
   choisit l'ouvrant dans ce catalogue (onglet « Ouvrants ») et
   la positionne sur le mur par pas de 60 cm (flèches « − » / « + »,
   affichage en cm, minimum 7,8 cm — pas de saisie libre).
+- **Fenêtres de toit** — à l'identique des ouvrants (visuel, nom, dimensions,
+  favori Archicad, coût unitaire). Le client les pose sur un **pent de
+  toiture** (clic sur la toiture : « + rajouter une fenêtre de toit »,
+  catalogue + position le long du bas de pente, même grille 7,8 cm + 60 cm
+  que les ouvrants). Sur le plan, chaque fenêtre est symbolisée par un
+  **cadre en pointillé** placé à 20 px de la ligne directrice du bas de pente,
+  dont la profondeur projetée tient compte de la pente du versant
+  (hauteur × cos pente). Ligne « Fenêtres de toit » au chiffrage (coûts
+  unitaires), export `module.toiture.pents[*].fenetres[]`.
 - **systèmes Aut.** — systèmes autonomes (panneaux solaires, batterie,
   poêle, récupération d'eau…) : comme les ouvrants (visuel, nom, dimensions,
   favori Archicad) avec un **coût unitaire**.

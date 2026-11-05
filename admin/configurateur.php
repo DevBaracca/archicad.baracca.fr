@@ -219,6 +219,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         cat_redirect('menuiseries', 'deleted');
     }
 
+    // ----- Fenêtres de toit (onglet « Fenêtres de toit », zone Catalogue) -----
+    // À l'identique des ouvrants (visuel, nom, dimensions, favori, coût
+    // unitaire) — posées sur les pents de toiture côté client.
+    if ($action === 'save_fenetre_toit') {
+        $id = trim((string) ($_POST['id'] ?? ''));
+        $nom = trim((string) ($_POST['nom'] ?? ''));
+        // Saisie en cm (précision mm) — stockage en m
+        $largeur = round(cat_num('largeur') / 100, 3);
+        $hauteur = round(cat_num('hauteur') / 100, 3);
+        $tarif = round(cat_num('tarif'), 2);
+        if ($nom === '' || $largeur <= 0 || $hauteur <= 0) {
+            cat_redirect('fenetres_toit', 'invalid');
+        }
+        $item = archicad_catalogue_upsert('fenetres_toit', [
+            'nom' => $nom,
+            'largeur' => $largeur,
+            'hauteur' => $hauteur,
+            'favori' => trim((string) ($_POST['favori'] ?? '')),
+            'tarif' => $tarif,
+        ], $id !== '' ? $id : null);
+        // Visuel (suppression demandée ou nouvel envoi)
+        if (isset($_POST['remove_image']) && (string) ($item['image'] ?? '') !== '') {
+            $fs = archicad_catalogue_image_fs_path((string) $item['image']);
+            if ($fs !== null && is_file($fs)) {
+                unlink($fs);
+            }
+            archicad_catalogue_upsert('fenetres_toit', ['image' => ''], (string) $item['id']);
+        }
+        if (isset($_FILES['image']) && is_array($_FILES['image'])) {
+            $stored = archicad_catalogue_store_image($_FILES['image'], (string) $item['id'], 'fenetres_toit');
+            if (!$stored['ok']) {
+                cat_redirect('fenetres_toit', 'image', (string) $stored['error']);
+            }
+            $old = (string) ($item['image'] ?? '');
+            if ($old !== '' && $old !== $stored['webPath']) {
+                $fs = archicad_catalogue_image_fs_path($old);
+                if ($fs !== null && is_file($fs)) {
+                    unlink($fs);
+                }
+            }
+            archicad_catalogue_upsert('fenetres_toit', ['image' => (string) $stored['webPath']], (string) $item['id']);
+        }
+        cat_redirect('fenetres_toit', 'saved');
+    }
+    if ($action === 'delete_fenetre_toit') {
+        archicad_catalogue_delete('fenetres_toit', trim((string) ($_POST['id'] ?? '')));
+        cat_redirect('fenetres_toit', 'deleted');
+    }
+
+    // ----- Marge de la rubrique active (zones Catalogue et Revêtements) -----
+    // Champ « Marge » à droite de la ligne des onglets : coefficient appliqué au
+    // chiffrage côté client (prix de l'élément × marge de son onglet ; 1 = aucune).
+    if ($action === 'save_marge') {
+        $kind = (string) ($_POST['kind'] ?? '');
+        if (!in_array($kind, archicad_marge_kinds(), true)) {
+            cat_redirect($section, 'invalid');
+        }
+        $v = str_replace(',', '.', trim((string) ($_POST['marge'] ?? '')));
+        $marge = is_numeric($v) ? max(0, round((float) $v, 4)) : 1.0;
+        archicad_marge_save($kind, $marge);
+        cat_redirect($kind, 'saved');
+    }
+
     // ----- Modèles de modules (géométrie uniquement) -----
     if ($action === 'save_module') {
         $id = trim((string) ($_POST['id'] ?? ''));
@@ -732,6 +795,7 @@ $groupes = [
         ['planchers', 'Planchers', count($planchers)],
         ['toitures', 'Complexe de toiture', count($toitures)],
         ['menuiseries', 'Ouvrants', count($menuiseries)],
+        ['fenetres_toit', 'Fenêtres de toit', count($fenetresToit)],
         ['systemes_aut', 'systèmes Aut.', count($systemesAut)],
     ]],
     'surfaces' => ['label' => 'Revêtements', 'sections' => [
@@ -859,6 +923,98 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         <div class="admin-actions">
           <button type="submit" class="btn btn-cta">Enregistrer</button>
           <a href="configurateur.php?section=menuiseries" class="btn btn-secondary">Annuler</a>
+        </div>
+      </form>
+    </div>
+    <?php modal_close(); endif; ?>
+
+    <?php elseif ($section === 'fenetres_toit'): ?>
+    <div class="admin-card">
+      <h2>Fenêtres de toit (<?= count($fenetresToit) ?>) <?= cat_btn_add('configurateur.php?section=fenetres_toit&new=1', 'Ajouter une fenêtre de toit') ?></h2>
+      <p class="admin-hint">À l'identique des ouvrants (visuel, nom, dimensions, référence Archicad, coût unitaire) : le client choisit une fenêtre de toit dans ce catalogue pour la poser sur un pent de toiture (clic sur la toiture dans le configurateur) ; elle est symbolisée par un cadre en pointillé sur le plan. Le visuel est affiché dans le configurateur.</p>
+      <?php if ($fenetresToit === []): ?>
+        <p class="admin-hint">Aucune fenêtre de toit dans le catalogue pour le moment.</p>
+      <?php else: ?>
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Visuel</th>
+              <th>Nom</th>
+              <th>Dimensions</th>
+              <th>Référence Archicad</th>
+              <th>Coût unitaire</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($fenetresToit as $ft): ?>
+              <tr>
+                <td><?= cat_thumb($ft) ?></td>
+                <td><strong><?= htmlspecialchars((string) $ft['nom']) ?></strong></td>
+                <td><?= cat_cm((float) ($ft['largeur'] ?? 0)) ?> × <?= cat_cm((float) ($ft['hauteur'] ?? 0)) ?></td>
+                <td><?= ($ft['favori'] ?? '') !== '' ? htmlspecialchars((string) $ft['favori']) : '—' ?></td>
+                <td><?= cat_eur((float) ($ft['tarif'] ?? 0)) ?> €</td>
+                <td class="admin-actions">
+                  <?= cat_action_edit('configurateur.php?section=fenetres_toit&edit=' . urlencode((string) $ft['id'])) ?>
+                  <?= cat_action_delete('configurateur.php?section=fenetres_toit', $csrf, 'delete_fenetre_toit', (string) $ft['id'], 'Supprimer cette fenêtre de toit du catalogue ?') ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
+    </div>
+    <?php if ($editFenetreToit || $new): modal_open('configurateur.php?section=fenetres_toit'); ?>
+    <div class="admin-card">
+      <h2><?= $editFenetreToit ? 'Modifier : ' . htmlspecialchars((string) $editFenetreToit['nom']) : 'Ajouter une fenêtre de toit' ?></h2>
+      <form method="post" action="configurateur.php?section=fenetres_toit" enctype="multipart/form-data">
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+        <input type="hidden" name="action" value="save_fenetre_toit">
+        <input type="hidden" name="id" value="<?= htmlspecialchars((string) ($editFenetreToit['id'] ?? '')) ?>">
+        <div class="modal-visual-row">
+          <?php if ($editFenetreToit && ($editFenetreToit['image'] ?? '') !== ''): ?>
+            <img src="../<?= ltrim(htmlspecialchars((string) $editFenetreToit['image']), '/') ?>" alt="" class="modal-visual-img">
+            <label class="admin-hint"><input type="checkbox" name="remove_image" value="1"> Supprimer le visuel</label>
+          <?php endif; ?>
+          <label for="ft-image">Visuel (image)</label>
+          <input type="file" id="ft-image" name="image" accept="image/*">
+          <span class="admin-hint">JPG, PNG, WebP ou GIF — 5 Mo max. Affiché dans le configurateur.</span>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="ft-nom">Nom</label>
+            <input type="text" id="ft-nom" name="nom" required value="<?= htmlspecialchars((string) ($editFenetreToit['nom'] ?? '')) ?>" placeholder="Fenêtre de toit 0,78 × 0,98 m">
+          </div>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="ft-largeur">Largeur (cm)</label>
+            <input type="number" id="ft-largeur" name="largeur" step="0.1" min="10" required value="<?= htmlspecialchars($editFenetreToit ? cat_cm_input((float) $editFenetreToit['largeur']) : '78') ?>">
+          </div>
+          <div class="admin-form-row">
+            <label for="ft-hauteur">Hauteur (cm)</label>
+            <input type="number" id="ft-hauteur" name="hauteur" step="0.1" min="10" required value="<?= htmlspecialchars($editFenetreToit ? cat_cm_input((float) $editFenetreToit['hauteur']) : '98') ?>">
+          </div>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="ft-tarif">Coût unitaire (€)</label>
+            <input type="number" id="ft-tarif" name="tarif" step="0.01" min="0" value="<?= htmlspecialchars((string) ($editFenetreToit['tarif'] ?? '0')) ?>">
+          </div>
+        </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="ft-favori">Référence Archicad</label>
+            <input type="text" id="ft-favori" name="favori" value="<?= htmlspecialchars((string) ($editFenetreToit['favori'] ?? '')) ?>" placeholder="Nom de la référence Archicad, vide = aucune">
+          </div>
+        </div>
+        <div class="admin-actions">
+          <button type="submit" class="btn btn-cta">Enregistrer</button>
+          <a href="configurateur.php?section=fenetres_toit" class="btn btn-secondary">Annuler</a>
         </div>
       </form>
     </div>

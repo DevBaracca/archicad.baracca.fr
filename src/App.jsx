@@ -47,6 +47,12 @@ const SYSTEMES_AUT = [
 const AUTONOMIES = [
   { id: "autonomie-standard", nom: "Autonomie standard", defaut: true, systemes: ["panneaux-3kwc", "batterie-5kwh"], image: "" },
 ];
+// Fenêtres de toit (catalogue « Fenêtres de toit » du back-office) : coût unitaire
+const FENETRES_TOIT = [
+  { id: "velux-78x98", nom: "Fenêtre de toit 0,78 × 0,98 m", largeur: 0.78, hauteur: 0.98, favori: "", tarif: 0, image: "" },
+  { id: "velux-114x118", nom: "Fenêtre de toit 1,14 × 1,18 m", largeur: 1.14, hauteur: 1.18, favori: "", tarif: 0, image: "" },
+  { id: "puits-lumiere-100", nom: "Puits de lumière 1,00 × 1,00 m", largeur: 1.00, hauteur: 1.00, favori: "", tarif: 0, image: "" },
+];
 const PLANCHERS = [
   { id: "clt_dalle", nom: "Dalle CLT + chape", epaisseur: 0.30, favori: "" },
   { id: "plancher_bois", nom: "Plancher bois sur lambourdes", epaisseur: 0.24, favori: "" },
@@ -100,6 +106,7 @@ const DEFAULTS = {
   surfaceToiture: null, // (ancien schéma) surface de toiture unique — migré vers surfacesToiture
   surfacesToiture: {}, // { [instId]: { [versant]: couvertureId|null } } — un revêtement de TOITURE (catalogue « Toiture ») par pent de chaque module
   surfacesIntToiture: {}, // { [instId]: { [versant]: interieurId|null } } — un revêtement INTÉRIEUR (sous-face) par pent de chaque module
+  fenetresToit: {}, // { [instId]: { [versant]: [{ fenetreId, largeur, hauteur, position }] } } — fenêtres de toit posées sur chaque pent (position le long du bas de pente, en m)
   // Modules placés côte à côte : chaque instance a une position absolue
   // (x, y en mètres, coin haut-gauche) et son propre modèle ; le module initial
   // en (0,0). Chaque instance a ses propres murs (actif = mur, sinon charpente)
@@ -505,7 +512,10 @@ function surfacesChiffrage(d, env) {
   );
   // côtés passés en charpente (pas de mur) : comptés à l'unité
   const charpentes = edges.reduce((n, e) => n + (e.actif ? 0 : 1), 0);
-  return { murs: M.total, mursDetail: M.detail, plancher, toiture: toitureS, toitureBase, pents, ouvrants, charpentes };
+  // fenêtres de toit : nombre total posées sur les pents
+  const fenetresToit = Object.values(d.fenetresToit || {}).reduce(
+    (n, perInst) => n + Object.values(perInst || {}).reduce((s, list) => s + (list?.length || 0), 0), 0);
+  return { murs: M.total, mursDetail: M.detail, plancher, toiture: toitureS, toitureBase, pents, ouvrants, charpentes, fenetresToit };
 }
 
 function tarifTotal(d, env) {
@@ -752,6 +762,54 @@ function pentParts(d, inst, dimsOf, pents, toitType, x, y, L, l) {
   return [{ versant: v, numero: num(v), points: `${x},${y} ${x + L},${y} ${x + L},${y + l} ${x},${y + l}` }];
 }
 
+/* ----- Fenêtres de toit (posées sur les pents) ----- */
+// Bord « bas de pente » d'un pent sur le plan (= bord de la ligne directrice
+// du module côté gouttière) : monopente/terrasse -> sud, deux pentes et quatre
+// pentes -> le versant lui-même.
+const basPenteOf = (toitType, versant) =>
+  toitType === "deuxpentes" || toitType === "quatrepentes" ? versant : "sud";
+// Pente du versant (pour projeter le cadre de la fenêtre sur le plan)
+const penteOfPent = (d, toitType, versant) =>
+  toitType === "terrasse" ? 0
+  : toitType === "deuxpentes" && versant === "sud" ? pente2Of(d)
+  : pente1Of(d);
+// Longueur du bas de pente d'un pent (m) : nord/sud -> longueur du module,
+// est/ouest -> largeur
+const basPenteLongueur = (dm, toitType, versant) => {
+  const edge = basPenteOf(toitType, versant);
+  return edge === "nord" || edge === "sud" ? dm.longueur : dm.largeur;
+};
+// Profondeur du cadre projetée sur le plan : la hauteur est mesurée dans le
+// rampant, sa projection horizontale vaut hauteur × cos(pente)
+const fenetreToitProfondeur = (d, toitType, versant, hauteur) =>
+  +hauteur * Math.cos((penteOfPent(d, toitType, versant) * Math.PI) / 180);
+// Profondeur par défaut du cadre depuis la ligne directrice du bas de pente (px plan)
+const FENETRE_TOIT_DEP_PX = 20;
+// Liste des fenêtres de toit d'un pent
+const fenetresOfPent = (d, instId, versant) => d.fenetresToit?.[instId]?.[versant] || [];
+
+/* ----- Promotions -----
+   Promotion active : le code saisi correspond à une promotion dont la période
+   (dateDebut/dateFin, inclus) contient la date du jour ET qui est affectée à
+   l'un des modules utilisés dans la configuration. */
+function promoActive(d, env) {
+  const code = String(d.promoCode || "").trim().toLowerCase();
+  if (!code) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const t = today.getTime();
+  const used = new Set((d.instances?.length ? d.instances : [{ moduleId: d.moduleId }])
+    .map((i) => i.moduleId || d.moduleId));
+  return (env.promotions || []).find((p) => {
+    if (String(p.code || "").trim().toLowerCase() !== code) return false;
+    const dd = String(p.dateDebut || ""), df = String(p.dateFin || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dd) || !/^\d{4}-\d{2}-\d{2}$/.test(df)) return false;
+    if (!(t >= new Date(dd + "T00:00:00").getTime() && t <= new Date(df + "T23:59:59").getTime())) return false;
+    const mods = Array.isArray(p.modules) ? p.modules : [];
+    return mods.some((m) => used.has(m));
+  }) || null;
+}
+
 /* =================================================================
    Plan SVG (vue de dessus)
 ================================================================= */
@@ -873,6 +931,29 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
             onClick={(ev) => onSelectPent(inst.id, pp.versant, ev)}
           />
         ));
+      })}
+      {/* fenêtres de toit : cadre en pointillé sur le pent, à 20 px du bas de
+          pente ; la profondeur du cadre est projetée selon la pente (hauteur × cos) */}
+      {insts.map((inst) => {
+        const x = X(inst.x), y = Y(inst.y), L = Lof(inst), l = lof(inst);
+        return Object.entries(d.fenetresToit?.[inst.id] || {}).flatMap(([versant, list]) =>
+          (list || []).map((f, i) => {
+            const edge = basPenteOf(toitType, versant);
+            const hProj = fenetreToitProfondeur(d, toitType, versant, f.hauteur) * scale; // profondeur projetée (px)
+            const wPx = f.largeur * scale;
+            const dep = FENETRE_TOIT_DEP_PX; // 20 px depuis le bas de pente
+            let rx, ry, rw, rh;
+            if (edge === "nord") { rx = x + f.position * scale; ry = y + dep; rw = wPx; rh = hProj; }
+            else if (edge === "sud") { rx = x + f.position * scale; ry = y + l - dep - hProj; rw = wPx; rh = hProj; }
+            else if (edge === "ouest") { rx = x + dep; ry = y + f.position * scale; rw = hProj; rh = wPx; }
+            else { rx = x + L - dep - hProj; ry = y + f.position * scale; rw = hProj; rh = wPx; } // est
+            return (
+              <rect key={`${inst.id}-${versant}-${i}`} x={rx} y={ry} width={rw} height={rh}
+                fill="rgba(37,99,235,0.10)" stroke="#2563eb" strokeWidth="1.5" strokeDasharray="4 3"
+                pointerEvents="none" title={`Fenêtre de toit — pent ${versant}`} />
+            );
+          })
+        );
       })}
       {/* faitage de chaque module */}
       {insts.map((inst) => {
@@ -1420,6 +1501,9 @@ export default function App() {
     isolations: catalogue?.isolation?.length ? catalogue.isolation : ISOLATIONS,
     systemesAut: catalogue?.systemes_aut?.length ? catalogue.systemes_aut : SYSTEMES_AUT, // systèmes autonomes
     autonomies: catalogue?.autonomie?.length ? catalogue.autonomie : AUTONOMIES, // packs autonomie
+    fenetresToit: catalogue?.fenetres_toit?.length ? catalogue.fenetres_toit : FENETRES_TOIT, // fenêtres de toit
+    marges: catalogue?.marges || {}, // coefficients de marge par rubrique (zones Catalogue / Revêtements)
+    promotions: catalogue?.promotions || [], // codes promotionnels (zone Structure)
     formes: catalogue?.formes?.length ? catalogue.formes : FORMES,
     charpentes: catalogue?.charpentes?.length ? catalogue.charpentes : CHARPENTES,
     toitures: catalogue?.toitures?.length ? catalogue.toitures : TOITURES,
@@ -1650,6 +1734,63 @@ export default function App() {
   };
   const removeOuverture = (i) =>
     setFace(selectedFace, { ouvertures: face.ouvertures.filter((_, j) => j !== i) });
+
+  /* ----- Fenêtres de toit sur le pent sélectionné (modale « Toiture ») -----
+     Même principe que les ouvrants sur les murs : catalogue + position le long
+     du bas de pente (pas de 60 cm, min 7,8 cm) ; profondeur fixe à 20 px du
+     bas de pente sur le plan. */
+  const pentSel = selPent ? pentsAll.find((pp) => pp.instId === selPent.instId && pp.versant === selPent.versant) : null;
+  const fenetresPent = pentSel ? fenetresOfPent(d, pentSel.instId, pentSel.versant) : [];
+  const basPenteLen = pentSel ? basPenteLongueur(dimsOf(d, env, instOf(d, pentSel.instId)), toitType, pentSel.versant) : 0;
+  const setFenetres = (list) => {
+    if (!pentSel) return;
+    setD((prev) => ({
+      ...prev,
+      fenetresToit: {
+        ...(prev.fenetresToit || {}),
+        [pentSel.instId]: { ...(prev.fenetresToit?.[pentSel.instId] || {}), [pentSel.versant]: list },
+      },
+    }));
+  };
+  const validerFenetre = (f) => f.position >= POSITION_MIN - 1e-9 && f.position + f.largeur <= basPenteLen + 1e-9;
+  const ouvrirAjoutFen = () => {
+    setAddFenId(env.fenetresToit?.[0]?.id || "");
+    setAddFenError("");
+    setAddFenOpen(true);
+  };
+  const validerAjoutFen = () => {
+    const def = env.fenetresToit?.find((x) => x.id === addFenId);
+    const largeur = def ? +def.largeur : 0.78;
+    const hauteur = def ? +def.hauteur : 0.98;
+    // Place occupée = fin de la dernière fenêtre de toit
+    const occupe = fenetresPent.reduce((mx, f) => Math.max(mx, f.position + f.largeur), 0);
+    // Position calée sur la grille 7,8 cm + n × 60 cm, au moins après la dernière fenêtre
+    const k = Math.max(0, Math.ceil((occupe - POSITION_MIN) / POSITION_STEP - 1e-9));
+    const position = Math.round((POSITION_MIN + k * POSITION_STEP) * 1000) / 1000;
+    if (position + largeur > basPenteLen + 1e-9) {
+      setAddFenError(`Plus de place sur ce pent (${fmtCm(basPenteLen)} cm) pour cette fenêtre (${fmtCm(largeur)} cm) à partir de ${fmtCm(position)} cm.`);
+      return;
+    }
+    setFenetres([...fenetresPent, { fenetreId: def?.id ?? null, largeur, hauteur, position }]);
+    setAddFenOpen(false);
+    setAddFenError("");
+  };
+  const updateFen = (i, patch) => setFenetres(fenetresPent.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+  const pickFen = (i, fenetreId) => {
+    const m = env.fenetresToit?.find((x) => x.id === fenetreId);
+    updateFen(i, m
+      ? { fenetreId: m.id, largeur: +m.largeur, hauteur: +m.hauteur }
+      : { fenetreId: null });
+  };
+  /* Position maximale : la fenêtre reste entièrement sur le bas de pente */
+  const fenPositionMax = (f) => Math.max(POSITION_MIN, basPenteLen - f.largeur);
+  /* Avance/recule par pas de 60 cm le long du bas de pente */
+  const stepFen = (i, dir) => {
+    const f = fenetresPent[i];
+    const next = Math.round((f.position + dir * POSITION_STEP) * 1000) / 1000;
+    updateFen(i, { position: Math.min(Math.max(next, POSITION_MIN), fenPositionMax(f)) });
+  };
+  const removeFen = (i) => setFenetres(fenetresPent.filter((_, j) => j !== i));
 
   const nbErreurs = eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).reduce(
     (n, e) => n + (e.actif
@@ -2344,8 +2485,98 @@ export default function App() {
               )}
           </>
           )}
-          {selIsToiture && (
-            <p className="config-hint">Aucun ouvrant en toiture — cliquez un mur sur le plan pour gérer ses ouvrants.</p>
+          {selIsToiture && pentSel && (
+          <>
+          <hr className="sep" />
+          <p className="section-label">Fenêtres de toit — pent {pentSel.numero} (module {pentSel.instIndex}, {pentSel.versant})</p>
+
+          <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+            <button type="button" className="btn-add" onClick={ouvrirAjoutFen} title="Rajouter une fenêtre de toit">+</button>
+            <span style={{ fontSize: "0.85rem", color: "var(--muted)" }}>rajouter une fenêtre de toit</span>
+          </div>
+          {addFenOpen && (
+            <div className="ouverture add-zone">
+              <div className="ouverture-main">
+                <div className="menuiserie-row">
+                  <div className="fields-grid" style={{ flex: 1 }}>
+                    <Field label="Fenêtre de toit (catalogue)">
+                      <select value={addFenId} onChange={(e) => setAddFenId(e.target.value)}>
+                        {env.fenetresToit?.map((x) => (
+                          <option key={x.id} value={x.id}>
+                            {x.nom} — {fmtCm(x.largeur)} × {fmtCm(x.hauteur)} cm{+x.tarif > 0 ? ` — ${fmtEur(x.tarif)} HT` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                </div>
+                <button type="button" className="btn primary small" onClick={validerAjoutFen}>Valider</button>
+                <button type="button" className="icon-btn danger" onClick={() => setAddFenOpen(false)} title="Annuler" aria-label="Annuler">
+                  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+                </button>
+              </div>
+              {addFenError && <div className="field-error">{addFenError}</div>}
+            </div>
+          )}
+          <p className="config-hint" style={{ marginTop: 0 }}>
+            Choisissez une fenêtre de toit dans le catalogue (type, dimensions et tarif définis dans le
+            back-office), puis sa position le long du bas de pente (pas de 60 cm). Sur le plan, le cadre
+            en pointillé est placé à {FENETRE_TOIT_DEP_PX} px de la ligne directrice du bas de pente, et sa
+            profondeur projetée tient compte de la pente du versant ({penteOfPent(d, toitType, pentSel.versant)}°).
+          </p>
+          <div>
+            {fenetresPent.map((f, i) => {
+              const m = env.fenetresToit?.find((x) => x.id === f.fenetreId);
+              return (
+              <div key={i} className="ouverture">
+                <div className="ouverture-main">
+                <div className="menuiserie-row">
+                  {m?.image && <img src={m.image} alt={m.nom} className="menuiserie-thumb" />}
+                  <div className="fields-grid" style={{ flex: 1 }}>
+                    <Field label="Fenêtre de toit (catalogue)">
+                      <select value={f.fenetreId || ""} onChange={(e) => pickFen(i, e.target.value)}>
+                        <option value="">Fenêtre sur mesure…</option>
+                        {env.fenetresToit?.map((x) => (
+                          <option key={x.id} value={x.id}>
+                            {x.nom} — {fmtCm(x.largeur)} × {fmtCm(x.hauteur)} cm{+x.tarif > 0 ? ` — ${fmtEur(x.tarif)} HT` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="position le long du bas de pente">
+                      <div className="stepper">
+                        <button type="button" className="btn small step-arrow"
+                          disabled={f.position - POSITION_STEP < POSITION_MIN - 1e-9}
+                          onClick={() => stepFen(i, -1)} title="Déplacer vers le début du bas de pente" aria-label="Déplacer vers le début du bas de pente">
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 12H5m0 0l6-6m-6 6l6 6"/></svg>
+                        </button>
+                        <button type="button" className="btn small step-arrow"
+                          disabled={f.position + POSITION_STEP > fenPositionMax(f) + 1e-9}
+                          onClick={() => stepFen(i, 1)} title="Déplacer vers la fin du bas de pente" aria-label="Déplacer vers la fin du bas de pente">
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14m0 0l-6-6m6 6l-6 6"/></svg>
+                        </button>
+                      </div>
+                    </Field>
+                  </div>
+                </div>
+                <button className="icon-btn danger" onClick={() => removeFen(i)} title="Supprimer la fenêtre de toit" aria-label="Supprimer la fenêtre de toit">
+                  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+                </button>
+                </div>
+                {!validerFenetre(f) && (
+                  <div className="field-error">
+                    Position autorisée : entre {fmtCm(POSITION_MIN)} cm et {fmtCm(Math.max(0, basPenteLen - f.largeur))} cm
+                    depuis le début du bas de pente ({fmtCm(basPenteLen)} cm).
+                  </div>
+                )}
+              </div>
+              );
+            })}
+          </div>
+          </>
+          )}
+          {selIsToiture && !pentSel && (
+            <p className="config-hint">Cliquez un pent de toiture sur le plan pour y poser des fenêtres de toit.</p>
           )}
 
         </div>
