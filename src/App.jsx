@@ -1572,6 +1572,17 @@ export default function App() {
   // débord de toiture effectif (m) : champ client > champ back-office de la forme > épaisseur
   const depToitM = Math.max(0, +(d.depassee ?? formeDef?.depassee ?? +(toitureDef.epaisseur ?? 0.30) * 100)) / 100;
   const [popPos, setPopPos] = useState(null); // position écran du dernier clic sur le plan (ancrage des pop-ups)
+  // Pop-up déplaçable par sa barre de titre (elle peut masquer des éléments du plan)
+  const startPopDrag = (e) => {
+    if (e.button !== 0 || !popPos) return;
+    if (e.target.closest("button")) return; // ne pas gêner le bouton « fermer »
+    e.preventDefault();
+    const start = { cx: e.clientX, cy: e.clientY, x: popPos.x, y: popPos.y };
+    const move = (ev) => setPopPos({ x: start.x + ev.clientX - start.cx, y: start.y + ev.clientY - start.cy });
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
   // pop-ups ancrées horizontalement sur l'élément cliqué du plan (centrées dessus)
   const popStyle = popPos
     ? { position: "fixed", margin: 0, left: Math.max(8, Math.min(popPos.x - 200, (window.innerWidth || 1200) - 416)), top: Math.max(8, Math.min(popPos.y - 24, (window.innerHeight || 800) - 120)) }
@@ -1644,6 +1655,11 @@ export default function App() {
   const dmSel = dimsOf(d, env, inst); // dims du module sélectionné
   // surface du mur sélectionné (ligne directrice + 2 épaisseurs, moins les ouvrants)
   const murArea = Math.max(0, (murLongueurDm(dmSel, selectedFace) + 2 * +(murSel?.epaisseur ?? 0)) * dmSel.hauteur - surfaceMenuiserie(face));
+  // Surface affichée dans la pop-up = CELLE DU CHIFFRAGE pour l'arête sélectionnée
+  // (avec triangle de pignon + épaisseur de toiture, et surface intérieure à part)
+  const selMurDetail = selEdge
+    ? surfaces.mursDetail.find((m) => m.key === (selEdge.edge || `${selEdge.inst.id}-${selEdge.face}`))
+    : null;
 
   /* Clic sur un + du plan : ouvre le choix du modèle à ajouter. Le côté commun
      doit avoir la même longueur -> on ne propose que les modèles compatibles. */
@@ -2108,7 +2124,7 @@ export default function App() {
             {addPick && (
             <div className="modal-overlay" onClick={() => setAddPick(null)}>
             <div className="card modal" style={popStyle} onClick={(e) => e.stopPropagation()}>
-              <div className="card-title modal-title">
+              <div className="card-title modal-title" onPointerDown={startPopDrag} style={{ cursor: popPos ? "grab" : undefined, touchAction: "none" }}>
                 <span>Ajouter un module au côté « {addPick.side} »</span>
                 <button type="button" className="icon-btn danger" onClick={() => setAddPick(null)} title="Annuler" aria-label="Annuler">
                   <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
@@ -2336,7 +2352,7 @@ export default function App() {
       {murOpen && (
       <div className="modal-overlay" onClick={() => setMurOpen(false)}>
       <div className="card modal" style={popStyle} onClick={(e) => e.stopPropagation()}>
-        <div className="card-title modal-title">
+        <div className="card-title modal-title" onPointerDown={startPopDrag} style={{ cursor: popPos ? "grab" : undefined, touchAction: "none" }}>
           <span>{selIsToiture ? "Toiture" : `Mur ${selEdge?.numero ?? "?"}` + (face.actif ? "" : " (charpente)")}</span>
           <button type="button" className="icon-btn danger" onClick={() => setMurOpen(false)} title="Fermer" aria-label="Fermer">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
@@ -2355,7 +2371,10 @@ export default function App() {
                 </select>
               </Field>
               <Field label="Surface du mur">
-                <span className="spec-v" style={{ alignSelf: "center", fontWeight: 600 }}>{fmtM2(murArea)}</span>
+                <span className="spec-v" style={{ alignSelf: "center", fontWeight: 600 }}>
+                  {selMurDetail ? fmtM2(selMurDetail.area) : fmtM2(murArea)}
+                  {selMurDetail && selMurDetail.areaInt != null ? ` (int. ${fmtM2(selMurDetail.areaInt)})` : ""}
+                </span>
               </Field>
             </div>
           )}
