@@ -137,8 +137,10 @@ possibles que depuis le back-office (soumissions).
 ## Catalogues du configurateur (back-office)
 
 Les catalogues proposés aux clients sont gérés depuis le back-office
-(`admin/configurateur.php`, lien « Configurateur » du menu admin), en six
-onglets : **Modules, Murs, Planchers, Toitures, Ouvrants, Surfaces**. L'ajout
+(`admin/configurateur.php`, lien « Configurateur » du menu admin), en trois
+cartes : **Structure** (Modules, Isolation, Formes), **Catalogue** (Charpentes,
+Murs, Planchers, Toitures, Ouvrants) et **Revêtements** (Extérieur, Intérieur,
+Toiture). L'ajout
 / la modification d'un élément se fait dans une **boîte
 (modale, descendue de 20 px pour ne pas être cachée par le menu fixe)** :
 bouton « + » à côté du titre de la rubrique, crayon bleu pour modifier,
@@ -158,9 +160,16 @@ referme. Le contenu des pages admin est descendu de 20 px (menu fixe).
   liés aux modules.
 - **Toitures** — géométrie monopente/deux pentes/terrasse, épaisseur, surface,
   couleur rgb, favori, tarif (à l'identique des murs), liées aux modules.
-- **Surfaces** — habillage extérieur : visuel téléversé (utilisé dans les
-  élévations du configurateur) et tarif. **Pas de favori Archicad** pour
-  cette rubrique.
+- **Revêtements — Extérieur** (`surfaces.json`) — habillage extérieur des
+  murs : visuel téléversé (utilisé dans les élévations du configurateur) et
+  tarif au m². Choisi sur la carte d'un mur, côté client.
+- **Revêtements — Intérieur** (`interieurs.json`) — revêtements intérieurs
+  (murs et sous-face de toiture) : visuel, nom, tarif au m². Choisi sur la
+  carte d'un mur (avec l'extérieur) ou d'un pent de toiture (avec la
+  couverture), côté client.
+- **Revêtements — Toiture** (`couvertures.json`) — couvertures de toiture
+  (revêtement de toiture) : visuel, nom, tarif au m², choisi **par pent** côté
+  client. Les trois rubriques de revêtements n'ont **pas de favori Archicad**.
 - **Ouvrants** — baies vitrées, fenêtres et portes, avec visuel (image
   envoyée depuis le back-office, stockée dans `assets/images/catalogue/`),
   dimensions (largeur × hauteur), favori Archicad et tarif. Le client
@@ -190,8 +199,11 @@ surfaces n'en ont pas). Le favori est repris dans l'export JSON
 `module.toiture.favori`, `module.murs[*].ouvertures[*].favori`) pour que
 `baracca_import.py` applique le bon favori Archicad. La **toiture** exportée
 porte aussi sa géométrie (`module.toiture.geometrie`) et son épaisseur
-(`module.toiture.epaisseur`) ; les murs exportent leur surface
-(`module.murs[*].surface`).
+(`module.toiture.epaisseur`) ; les murs exportent leur revêtement extérieur
+(`module.murs[*].surface`) et leur revêtement intérieur
+(`module.murs[*].surfaceInterieur`) ; chaque pent de toiture exporte son
+revêtement de toiture (`module.toiture.pents[*].surface`) et son revêtement
+intérieur (`module.toiture.pents[*].surfaceInterieur`).
 
 Plancher : en élévation, le plancher est dessiné sous les murs — sa **ligne
 directrice est en haut** (point bas des murs), son épaisseur s'étend vers le
@@ -212,20 +224,28 @@ surface avec un visuel, celui-ci remplit le mur de l'élévation (motif SVG),
 sinon la couleur rgb (affichée en hex) est utilisée.
 
 Chaque élément porte un champ **tarif** : le configurateur additionne les
-tarifs (modèle + mur + plancher + façade + menuiseries) pour afficher au
-client le **tarif global** du projet au fur et à mesure, repris dans
-l'export JSON (`metriques.tarif`).
+tarifs pour afficher au client le **tarif global** du projet au fur et à
+mesure, repris dans l'export JSON (`metriques.tarif`) :
+
+- **Murs** : (coût au m² du mur + revêtement **extérieur** + revêtement
+  **intérieur**) × surface de chaque mur ;
+- **Complexe de toiture** : (coût au m² de la toiture + revêtement
+  **intérieur** de la sous-face) × surface des pents **sans débords** ;
+- **Couverture** : coût au m² du revêtement de **toiture** choisi par pent ×
+  surface **avec débords**.
 
 Stockage : `data/catalogue/` (JSON, hors git, amorcé automatiquement au
 premier chargement avec les valeurs historiques du configurateur), **un
 fichier par rubrique** : `menuiseries.json`, `modules.json`, `murs.json`,
-`planchers.json`, `surfaces.json`, `toitures.json` (structure
+`planchers.json`, `surfaces.json` (Extérieur), `interieurs.json` (Intérieur),
+`couvertures.json` (Toiture), `toitures.json` (structure
 `{"items": [...]}` ; l'ancien fichier unique `enveloppe.json` est éclaté
 automatiquement à la première lecture). L'application React lit les
 catalogues en lecture seule via `php/api_catalogue.php` (menuiseries,
-modules, murs/planchers/surfaces/toitures) ; si l'API est indisponible,
-elle retombe sur les catalogues par défaut définis en tête de `src/App.jsx`
-(`MURS`, `PLANCHERS`, `FACADES`, `TOITURES`). La géométrie de toiture reste
+modules, murs/planchers/surfaces/interieurs/couvertures/toitures) ; si l'API
+est indisponible, elle retombe sur les catalogues par défaut définis en tête
+de `src/App.jsx` (`MURS`, `PLANCHERS`, `FACADES`, `INTERIEURS`,
+`COUVERTURES`, `TOITURES`). La géométrie de toiture reste
 un vocabulaire fixe (`archicad_catalogue_toiture_types()` : monopente, deux
 pentes, terrasse) — champ `type` des éléments de la rubrique Toitures.
 

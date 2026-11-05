@@ -47,6 +47,19 @@ const FACADES = [
   { id: "tole", nom: "Tôle nervurée", image: "" },
   { id: "brique", nom: "Brique de parement", image: "" },
 ];
+// Revêtements intérieurs (murs + sous-face de toiture) — catalogue « Intérieur »
+const INTERIEURS = [
+  { id: "placo_ba13", nom: "Placo BA13 + peinture", image: "" },
+  { id: "lambris_bois", nom: "Lambris bois", image: "" },
+  { id: "lambris_pvc", nom: "Lambris PVC", image: "" },
+];
+// Couvertures de toiture (revêtement de toiture, par pent) — catalogue « Toiture »
+const COUVERTURES = [
+  { id: "bardeaux_bois", nom: "Bardeaux bois", image: "" },
+  { id: "joint_debout", nom: "Tôle joint debout", image: "" },
+  { id: "tuiles_terre_cuite", nom: "Tuiles terre cuite", image: "" },
+  { id: "epdm", nom: "Membrane EPDM (terrasse)", image: "" },
+];
 const FACES = [
   { key: "nord", label: "Mur Nord" },
   { key: "est", label: "Mur Est" },
@@ -73,7 +86,8 @@ const DEFAULTS = {
   plancher: "clt_dalle",
   facade: "bardage_bois",
   surfaceToiture: null, // (ancien schéma) surface de toiture unique — migré vers surfacesToiture
-  surfacesToiture: {}, // { [instId]: { [versant]: surfaceId|null } } — un revêtement par pent de chaque module
+  surfacesToiture: {}, // { [instId]: { [versant]: couvertureId|null } } — un revêtement de TOITURE (catalogue « Toiture ») par pent de chaque module
+  surfacesIntToiture: {}, // { [instId]: { [versant]: interieurId|null } } — un revêtement INTÉRIEUR (sous-face) par pent de chaque module
   // Modules placés côte à côte : chaque instance a une position absolue
   // (x, y en mètres, coin haut-gauche) et son propre modèle ; le module initial
   // en (0,0). Chaque instance a ses propres murs (actif = mur, sinon charpente)
@@ -81,10 +95,12 @@ const DEFAULTS = {
     {
       id: "m0", x: 0, y: 0, moduleId: null,
       murs: {
-        nord: { actif: true, ouvertures: [], surface: null }, // surface du mur (null = celle du type de mur)
-        est: { actif: true, ouvertures: [], surface: null },
-        sud: { actif: true, ouvertures: [], surface: null },
-        ouest: { actif: true, ouvertures: [], surface: null },
+        // surface = revêtement EXTÉRIEUR (null = celui du type de mur) ;
+        // surfaceInt = revêtement INTÉRIEUR (null = premier du catalogue « Intérieur »)
+        nord: { actif: true, ouvertures: [], surface: null, surfaceInt: null },
+        est: { actif: true, ouvertures: [], surface: null, surfaceInt: null },
+        sud: { actif: true, ouvertures: [], surface: null, surfaceInt: null },
+        ouest: { actif: true, ouvertures: [], surface: null, surfaceInt: null },
       },
     },
   ],
@@ -94,7 +110,7 @@ const DEFAULTS = {
 /* ----- Modules multiples (positions absolues x/y en mètres) ----- */
 const instOf = (d, id) => (d.instances || []).find((i) => i.id === id) || (d.instances || [])[0];
 const modelMurs = (faces) =>
-  Object.fromEntries(FACES.map((f) => [f.key, { actif: (faces?.[f.key] ?? "mur") === "mur", ouvertures: [], surface: null }]));
+  Object.fromEntries(FACES.map((f) => [f.key, { actif: (faces?.[f.key] ?? "mur") === "mur", ouvertures: [], surface: null, surfaceInt: null }]));
 const bboxOf = (d, dmOf) => {
   const insts = d.instances?.length ? d.instances : [{ x: 0, y: 0, moduleId: d.moduleId }];
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -125,6 +141,28 @@ const versantsOf = (toitType) =>
   : toitType === "quatrepentes" ? ["nord", "est", "sud", "ouest"]
   : toitType === "terrasse" ? ["toit"]
   : ["sud"]; // monopente : 1 versant (gouttière au sud)
+
+/* ----- Revêtements : catalogues « Toiture » (couvertures) et « Intérieur » -----
+   couvListOf : repli rétro-compat — si le catalogue couvertures est absent
+   (vieille API), on retombe sur les surfaces (extérieur), comme avant. */
+const couvListOf = (env) => (env.couvertures?.length ? env.couvertures : env.facades);
+const intListOf = (env) => env.interieurs || [];
+// id de couverture effectif d'un pent : valeur enregistrée si elle existe dans
+// le catalogue, sinon le défaut (champ surface de la toiture), sinon le 1er
+const couvIdOf = (env, id, fallback) => {
+  const l = couvListOf(env);
+  if (id && l.some((c) => c.id === id)) return id;
+  if (fallback && l.some((c) => c.id === fallback)) return fallback;
+  return l[0]?.id ?? id ?? "";
+};
+// id de revêtement intérieur effectif : valeur enregistrée si valide, sinon le
+// premier du catalogue « Intérieur » ("" si le catalogue est vide)
+const intIdOf = (env, id) => {
+  const l = intListOf(env);
+  if (!l.length) return "";
+  if (id && l.some((c) => c.id === id)) return id;
+  return l[0].id;
+};
 
 /* Liste numérotée des pents de tous les modules (pour le chiffrage et la carte toiture) */
 function pentsOf(d, env) {
@@ -166,7 +204,8 @@ function pentsOf(d, env) {
       else { areaBase = dm.longueur * (dm.largeur / c1); area = areaBase + dm.longueur * dep * nbPigExt; } // monopente
       out.push({
         numero: n, instId: inst.id, instIndex: idx + 1, versant: v, area, areaBase,
-        surfaceId: d.surfacesToiture?.[inst.id]?.[v] ?? toiture?.surface ?? "",
+        surfaceId: couvIdOf(env, d.surfacesToiture?.[inst.id]?.[v], toiture?.surface), // revêtement de toiture (catalogue « Toiture »)
+        surfaceIntId: intIdOf(env, d.surfacesIntToiture?.[inst.id]?.[v]), // revêtement intérieur (sous-face)
       });
     }
   });
@@ -416,14 +455,17 @@ function mursChiffrage(d, env) {
     const ouv = [...(e.a?.ouvertures || []), ...(e.b?.ouvertures || [])];
     area -= ouv.reduce((ss, o) => ss + o.largeur * o.hauteur, 0);
     const surfaceId = e.a?.surface ?? murDef?.surface ?? "";
+    const surfaceIntId = intIdOf(env, e.a?.surfaceInt); // revêtement intérieur du mur
     const sd = env.facades.find((f) => f.id === surfaceId);
-    const amount = (eurM2(murDef) + eurM2(sd)) * area; // (coût mur + coût surface) × surface du mur
+    const sdInt = intListOf(env).find((f) => f.id === surfaceIntId);
+    // (coût mur + revêtement extérieur + revêtement intérieur) × surface du mur
+    const amount = (eurM2(murDef) + eurM2(sd) + eurM2(sdInt)) * area;
     total += area;
     detail.push({
       key: e.edge || `${e.inst.id}-${e.face}`,
       numero: e.numero,
       label: `Mur ${e.numero}` + (e.edge ? " (partagé)" : ""),
-      surfaceId, area, amount,
+      surfaceId, surfaceIntId, area, amount,
     });
   });
   return { total, detail };
@@ -468,13 +510,18 @@ function tarifTotal(d, env) {
       : 0),
     0
   );
-  // murs : somme des montants par mur (coût mur + coût de la surface choisie × surface)
+  // murs : somme des montants par mur (coût mur + revêtement extérieur + revêtement intérieur, × surface)
   const murAmount = S.mursDetail.reduce((s, m) => s + m.amount, 0);
-  // complexe de toiture : tarif de la toiture × surface sur la ligne directrice (sans débords)
-  const toitureAmount = (S.pents || []).reduce((s, p) => s + eurM2(toiture) * (p.areaBase ?? p.area), 0);
-  // couverture : tarif de la surface choisie pour le pent × surface AVEC débords
+  // complexe de toiture : tarif de la toiture + revêtement intérieur (sous-face) × surface sur la
+  // ligne directrice (sans débords)
+  const toitureAmount = (S.pents || []).reduce((s, p) => {
+    const sdInt = intListOf(env).find((f) => f.id === p.surfaceIntId);
+    return s + (eurM2(toiture) + eurM2(sdInt)) * (p.areaBase ?? p.area);
+  }, 0);
+  // couverture : tarif du revêtement de TOITURE choisi pour le pent (catalogue « Toiture »)
+  // × surface AVEC débords
   const couvertureAmount = (S.pents || []).reduce((s, p) => {
-    const sd = env.facades.find((f) => f.id === p.surfaceId);
+    const sd = couvListOf(env).find((f) => f.id === p.surfaceId);
     return s + eurM2(sd) * p.area;
   }, 0);
   // Charpente : coût unitaire de la charpente choisie (Réglages généraux) × nb de côtés en charpente
@@ -491,12 +538,17 @@ function tarifTotal(d, env) {
     charpente: charpenteAmount,
   };
   t.total = t.module + t.mur + t.plancher + t.facade + t.toiture + t.couverture + t.menuiseries + t.charpente;
-  // détail par pent (numéro, surface, montant) — part couverture (surface choisie × surface avec débords)
-  t.pents = (S.pents || []).map((p) => ({
-    ...p,
-    amount: eurM2(env.facades.find((f) => f.id === p.surfaceId)) * p.area, // couverture (avec débords)
-    amountBase: eurM2(toiture) * (p.areaBase ?? p.area), // complexe de toiture (sans débords)
-  }));
+  // détail par pent (numéro, revêtements, montants) — couverture : revêtement de toiture choisi
+  // × surface avec débords ; complexe : (toiture + revêtement intérieur) × surface sans débords
+  t.pents = (S.pents || []).map((p) => {
+    const sdCouv = couvListOf(env).find((f) => f.id === p.surfaceId);
+    const sdInt = intListOf(env).find((f) => f.id === p.surfaceIntId);
+    return {
+      ...p,
+      amount: eurM2(sdCouv) * p.area, // couverture : revêtement toiture, avec débords
+      amountBase: (eurM2(toiture) + eurM2(sdInt)) * (p.areaBase ?? p.area), // complexe de toiture + intérieur, sans débords
+    };
+  });
   return t;
 }
 
@@ -519,7 +571,8 @@ function buildExport(d, env) {
     type: murDef.nom,
     epaisseur: murDef.epaisseur,
     materiau: murDef.materiau ?? surfaceDef.nom,
-    surface: (env.facades.find((f) => f.id === (face.surface ?? murDef.surface)) || env.facades[0]).nom, // surface choisie pour ce mur
+    surface: (env.facades.find((f) => f.id === (face.surface ?? murDef.surface)) || env.facades[0]).nom, // revêtement extérieur choisi pour ce mur
+    surfaceInterieur: (intListOf(env).find((i) => i.id === intIdOf(env, face.surfaceInt)) || {}).nom ?? "", // revêtement intérieur du mur
     favori: murDef.favori ?? "", // favori Archicad pour ce mur
     longueur: murLongueur(d, f.key),
     hauteur: d.hauteur,
@@ -580,9 +633,10 @@ function buildExport(d, env) {
         favori: toitureDef.favori ?? "", // favori Archicad pour la toiture
         pents: pentsOf(d, env).map((p) => ({
           numero: p.numero, module: p.instIndex, versant: p.versant,
-          surface: (env.facades.find((f) => f.id === p.surfaceId) || env.facades[0]).nom,
+          surface: (couvListOf(env).find((f) => f.id === p.surfaceId) || couvListOf(env)[0])?.nom ?? "", // revêtement de toiture (catalogue « Toiture »)
           surface_m2: +p.area.toFixed(2),
-        })), // un revêtement par pent de chaque module
+          surfaceInterieur: (intListOf(env).find((i) => i.id === p.surfaceIntId) || {}).nom ?? "", // revêtement intérieur (sous-face du pent)
+        })), // un revêtement de toiture + un intérieur par pent de chaque module
         epaisseur: +(+(toitureDef.epaisseur ?? 0.30)).toFixed(3),
         pente: toitType === "terrasse" ? null : pente1Of(d), // pente du versant 1
         pente2: toitType === "deuxpentes" ? pente2Of(d) : null, // pente du versant 2 (deux pentes)
@@ -1327,7 +1381,9 @@ export default function App() {
   const env = {
     murs: catalogue?.enveloppe?.murs?.length ? catalogue.enveloppe.murs : MURS,
     planchers: catalogue?.enveloppe?.planchers?.length ? catalogue.enveloppe.planchers : PLANCHERS,
-    facades: catalogue?.enveloppe?.surfaces?.length ? catalogue.enveloppe.surfaces : FACADES,
+    facades: catalogue?.enveloppe?.surfaces?.length ? catalogue.enveloppe.surfaces : FACADES, // revêtements Extérieur
+    interieurs: catalogue?.enveloppe?.interieurs?.length ? catalogue.enveloppe.interieurs : INTERIEURS, // revêtements Intérieur
+    couvertures: catalogue?.enveloppe?.couvertures?.length ? catalogue.enveloppe.couvertures : COUVERTURES, // revêtements Toiture
     menuiseries: catalogue?.menuiseries?.length ? catalogue.menuiseries : null,
     modules: catalogue?.modules?.length ? catalogue.modules : null,
     isolations: catalogue?.isolation?.length ? catalogue.isolation : ISOLATIONS,
@@ -1358,6 +1414,8 @@ export default function App() {
   const charpenteSel = env.charpentes?.find((x) => x.id === d.charpente);
   const surfaceSel = env.facades.find((f) => f.id === murSel?.surface) || env.facades[0];
   const surfaceNom = (id) => env.facades.find((f) => f.id === id)?.nom || "—";
+  const couvNom = (id) => couvListOf(env).find((f) => f.id === id)?.nom || "—"; // revêtement de toiture (catalogue « Toiture »)
+  const intNom = (id) => intListOf(env).find((f) => f.id === id)?.nom || "—"; // revêtement intérieur (catalogue « Intérieur »)
   const plancherSel = env.planchers.find((p) => p.id === d.plancher);
   const json = useMemo(() => JSON.stringify(buildExport(d, env), null, 2), [d, catalogue]); // eslint-disable-line react-hooks/exhaustive-deps
   const tarifs = useMemo(() => tarifTotal(d, env), [d, catalogue]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2024,12 +2082,13 @@ export default function App() {
           <p className="section-label" style={{ marginTop: 0 }}>Revêtement</p>
           <p className="config-hint" style={{ marginTop: 0 }}>
             {selIsToiture
-              ? "Surface appliquée à la toiture (catalogue « Surfaces » du back-office)."
-              : "Surface appliquée à ce mur (catalogue « Surfaces » du back-office)."}
+              ? "Revêtements appliqués à la toiture (catalogues « Toiture » et « Intérieur » du back-office)."
+              : "Revêtements appliqués à ce mur (catalogues « Extérieur » et « Intérieur » du back-office)."}
           </p>
           <div className="fields-grid">
             {!selIsToiture && (
-            <Field label="Surface du mur">
+            <>
+            <Field label="Revêtement extérieur">
               <select
                 value={face.surface ?? murSel?.surface ?? ""}
                 onChange={(e) => setFace(planSel, { surface: e.target.value || null })}
@@ -2040,17 +2099,29 @@ export default function App() {
                 ))}
               </select>
             </Field>
+            <Field label="Revêtement intérieur">
+              <select
+                value={face.surfaceInt ?? ""}
+                onChange={(e) => setFace(planSel, { surfaceInt: e.target.value || null })}
+              >
+                <option value="">Par défaut — {intNom(intIdOf(env, face.surfaceInt))}</option>
+                {intListOf(env).map((s) => (
+                  <option key={s.id} value={s.id}>{s.nom}</option>
+                ))}
+              </select>
+            </Field>
+            </>
             )}
             {selIsToiture && (
-              // le pent cliqué sur le plan : un revêtement pour ce pent
+              // le pent cliqué sur le plan : revêtement de toiture + revêtement intérieur
               (() => {
                 const p = selPent ? pentsAll.find((pp) => pp.instId === selPent.instId && pp.versant === selPent.versant) : null;
-                if (!p) return <p className="config-hint">Cliquez un pent de toiture sur le plan pour choisir sa couverture.</p>;
+                if (!p) return <p className="config-hint">Cliquez un pent de toiture sur le plan pour choisir ses revêtements.</p>;
                 return (
                   <div className="fields-grid">
-                    <Field label={`Pent ${p.numero} — module ${p.instIndex} (${p.versant}) — ${fmtM2(p.area)}`}>
+                    <Field label={`Revêtement toiture — pent ${p.numero} (module ${p.instIndex}, ${p.versant}) — ${fmtM2(p.area)}`}>
                       <select
-                        value={d.surfacesToiture?.[p.instId]?.[p.versant] ?? toitureDef.surface ?? ""}
+                        value={d.surfacesToiture?.[p.instId]?.[p.versant] ?? ""}
                         onChange={(e) => setD((prev) => ({
                           ...prev,
                           surfacesToiture: {
@@ -2059,8 +2130,25 @@ export default function App() {
                           },
                         }))}
                       >
-                        <option value="">Par défaut — {surfaceNom(toitureDef.surface ?? "")}</option>
-                        {env.facades.map((s) => (
+                        <option value="">Par défaut — {couvNom(couvIdOf(env, null, toitureDef.surface))}</option>
+                        {couvListOf(env).map((s) => (
+                          <option key={s.id} value={s.id}>{s.nom}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label={`Revêtement intérieur (sous-face) — pent ${p.numero}`}>
+                      <select
+                        value={d.surfacesIntToiture?.[p.instId]?.[p.versant] ?? ""}
+                        onChange={(e) => setD((prev) => ({
+                          ...prev,
+                          surfacesIntToiture: {
+                            ...(prev.surfacesIntToiture || {}),
+                            [p.instId]: { ...(prev.surfacesIntToiture?.[p.instId] || {}), [p.versant]: e.target.value || null },
+                          },
+                        }))}
+                      >
+                        <option value="">Par défaut — {intNom(intIdOf(env, d.surfacesIntToiture?.[p.instId]?.[p.versant]))}</option>
+                        {intListOf(env).map((s) => (
                           <option key={s.id} value={s.id}>{s.nom}</option>
                         ))}
                       </select>
@@ -2215,7 +2303,7 @@ export default function App() {
             </p>
             {chiffrageOpen && surfaces.mursDetail.map((m) => (
               <div className="chiffrage-line" key={m.key}>
-                <span className="chiffrage-left"><span className="chiffrage-k">{m.label}</span><span className="chiffrage-surf">{surfaceNom(m.surfaceId)} - {fmtM2(m.area)}</span></span>
+                <span className="chiffrage-left"><span className="chiffrage-k">{m.label}</span><span className="chiffrage-surf">{surfaceNom(m.surfaceId)} · int. {intNom(m.surfaceIntId)} - {fmtM2(m.area)}</span></span>
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(m.amount)} HT</span></span>
               </div>
             ))}
@@ -2227,7 +2315,7 @@ export default function App() {
             </p>
             {pentsBaseOpen && (tarifs.pents || []).map((p) => (
               <div className="chiffrage-line" key={"b" + p.numero}>
-                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{fmtM2(p.areaBase ?? p.area)}</span></span>
+                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">int. {intNom(p.surfaceIntId)} — {fmtM2(p.areaBase ?? p.area)}</span></span>
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amountBase)} HT</span></span>
               </div>
             ))}
@@ -2238,7 +2326,7 @@ export default function App() {
             </p>
             {pentsOpen && (tarifs.pents || []).map((p) => (
               <div className="chiffrage-line" key={"c" + p.numero}>
-                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{surfaceNom(p.surfaceId)} — {fmtM2(p.area)}</span></span>
+                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{couvNom(p.surfaceId)} — {fmtM2(p.area)}</span></span>
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amount)} HT</span></span>
               </div>
             ))}

@@ -3,12 +3,15 @@
  * Baracca - Site archicad.baracca.fr
  * Catalogues du configurateur (data/catalogue/, un fichier JSON par rubrique :
  * menuiseries.json, modules.json, isolation.json, formes.json, charpentes.json,
- * murs.json, planchers.json, surfaces.json, toitures.json) : menuiseries (baies
- * vitrées, fenêtres, portes — avec visuel), modèles de modules (géométrie
- * prédéfinie uniquement), isolations (type de mur + plancher + toiture),
- * formes de toiture (géométrie, pentes), charpentes, murs, planchers, surfaces
- * et toitures. Chaque élément porte un tarif, additionné par le configurateur
- * pour afficher le tarif global du projet.
+ * murs.json, planchers.json, surfaces.json, interieurs.json, couvertures.json,
+ * toitures.json) : menuiseries (baies vitrées, fenêtres, portes — avec visuel),
+ * modèles de modules (géométrie prédéfinie uniquement), isolations (type de mur
+ * + plancher + toiture), formes de toiture (géométrie, pentes), charpentes, murs,
+ * planchers, toitures, et revêtements : « surfaces » = habillage EXTÉRIEUR des
+ * murs, « interieurs » = revêtements INTÉRIEURS (murs + sous-face de toiture),
+ * « couvertures » = revêtement de TOITURE (par pent, ligne « Couverture »).
+ * Chaque élément porte un tarif, additionné par le configurateur pour afficher
+ * le tarif global du projet.
  *
  * Gérés depuis le back-office (admin/configurateur.php), lus par
  * l'application React via php/api_catalogue.php. Au premier chargement,
@@ -19,7 +22,8 @@ require_once __DIR__ . '/../config.php';
 
 // Chaque kind a son propre fichier JSON dans data/catalogue/ :
 // menuiseries.json, modules.json, isolation.json, formes.json, charpentes.json,
-// murs.json, planchers.json, surfaces.json, toitures.json (structure {"items": [...]}).
+// murs.json, planchers.json, surfaces.json, interieurs.json, couvertures.json,
+// toitures.json (structure {"items": [...]}).
 function archicad_catalogue_dir(): string
 {
     return ARCHICAD_DATA_DIR . '/catalogue';
@@ -191,13 +195,33 @@ function archicad_catalogue_defaults(string $kind): array
                 ['id' => 'dalle_beton', 'nom' => 'Dalle béton', 'epaisseur' => 0.20, 'image' => '', 'favori' => '', 'tarif' => 0, 'created' => $today],
             ];
         case 'surfaces':
-            // Surfaces (habillage extérieur) : visuel téléversé depuis le
-            // back-office (image), utilisé dans les élévations. Pas de favori.
+            // Surfaces = revêtements d'habillage EXTÉRIEUR des murs : visuel
+            // téléversé depuis le back-office (image), utilisé dans les
+            // élévations. Pas de favori. Onglet « Extérieur » du back-office.
             return [
                 ['id' => 'bardage_bois', 'nom' => 'Bardage bois', 'image' => '', 'tarif' => 0, 'created' => $today],
                 ['id' => 'enduit', 'nom' => 'Enduit minéral', 'image' => '', 'tarif' => 0, 'created' => $today],
                 ['id' => 'tole', 'nom' => 'Tôle nervurée', 'image' => '', 'tarif' => 0, 'created' => $today],
                 ['id' => 'brique', 'nom' => 'Brique de parement', 'image' => '', 'tarif' => 0, 'created' => $today],
+            ];
+        case 'interieurs':
+            // Revêtements INTÉRIEURS (murs + sous-face de toiture), onglet
+            // « Intérieur » : visuel, nom, tarif au m² — le tarif est ajouté
+            // au chiffrage des murs et du complexe de toiture. Pas de favori.
+            return [
+                ['id' => 'placo_ba13', 'nom' => 'Placo BA13 + peinture', 'image' => '', 'tarif' => 0, 'created' => $today],
+                ['id' => 'lambris_bois', 'nom' => 'Lambris bois', 'image' => '', 'tarif' => 0, 'created' => $today],
+                ['id' => 'lambris_pvc', 'nom' => 'Lambris PVC', 'image' => '', 'tarif' => 0, 'created' => $today],
+            ];
+        case 'couvertures':
+            // Couvertures de TOITURE (revêtement de toiture, choisi par pent),
+            // onglet « Toiture » : visuel, nom, tarif au m² appliqué à la
+            // surface AVEC débords (ligne « Couverture » du chiffrage).
+            return [
+                ['id' => 'bardeaux_bois', 'nom' => 'Bardeaux bois', 'image' => '', 'tarif' => 0, 'created' => $today],
+                ['id' => 'joint_debout', 'nom' => 'Tôle joint debout', 'image' => '', 'tarif' => 0, 'created' => $today],
+                ['id' => 'tuiles_terre_cuite', 'nom' => 'Tuiles terre cuite', 'image' => '', 'tarif' => 0, 'created' => $today],
+                ['id' => 'epdm', 'nom' => 'Membrane EPDM (terrasse)', 'image' => '', 'tarif' => 0, 'created' => $today],
             ];
         case 'toitures':
             // Rubrique toiture : épaisseur (m) dessinée au-dessus de la ligne
@@ -548,6 +572,8 @@ function archicad_catalogue_total_items(): int
         + count(archicad_load_catalogue('murs'))
         + count(archicad_load_catalogue('planchers'))
         + count(archicad_load_catalogue('surfaces'))
+        + count(archicad_load_catalogue('interieurs'))
+        + count(archicad_load_catalogue('couvertures'))
         + count(archicad_load_catalogue('toitures'));
 }
 

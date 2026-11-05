@@ -22,7 +22,9 @@ echo json_encode([
         'enveloppe' => [
             'murs' => archicad_load_catalogue('murs'),
             'planchers' => archicad_load_catalogue('planchers'),
-            'surfaces' => archicad_load_catalogue('surfaces'),
+            'surfaces' => archicad_load_catalogue('surfaces'),       // revêtements Extérieur
+            'interieurs' => archicad_load_catalogue('interieurs'),   // revêtements Intérieur
+            'couvertures' => archicad_load_catalogue('couvertures'), // revêtements Toiture (couverture)
         ],
         'toitures' => archicad_catalogue_toitures(),
     ],

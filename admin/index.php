@@ -89,7 +89,7 @@ include __DIR__ . '/../includes/admin-head.php';
       <div class="admin-card">
         <h2>Configurateur</h2>
         <p class="admin-stat"><?= archicad_catalogue_total_items() ?></p>
-        <p>Éléments des catalogues proposés aux clients dans le configurateur : ouvrants, modules, formes de toiture, charpentes, enveloppe (murs, planchers, toitures) et surfaces, avec leurs tarifs et favoris Archicad.</p>
+        <p>Éléments des catalogues proposés aux clients dans le configurateur : ouvrants, modules, formes de toiture, charpentes, enveloppe (murs, planchers, toitures) et revêtements (Extérieur, Intérieur, Toiture), avec leurs tarifs et favoris Archicad.</p>
         <a href="configurateur.php" class="btn btn-secondary btn-icon" title="Ouvrir le configurateur (catalogues)" aria-label="Ouvrir le configurateur (catalogues)">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>
         </a>
