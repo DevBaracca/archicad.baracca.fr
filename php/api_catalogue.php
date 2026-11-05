@@ -29,5 +29,6 @@ echo json_encode([
             'couvertures' => archicad_load_catalogue('couvertures'), // revêtements Toiture (couverture)
         ],
         'toitures' => archicad_catalogue_toitures(),
+        'marges' => archicad_marges_all(), // coefficient de marge par rubrique (défaut 1)
     ],
 ], JSON_UNESCAPED_UNICODE);

@@ -611,6 +611,58 @@ function archicad_catalogue_delete(string $kind, string $id): bool
     return false;
 }
 
+/**
+ * Marges (coefficients) par rubrique des zones « Catalogue » et « Revêtements »,
+ * saisies dans le back-office (champ « Marge » à droite de la ligne des
+ * onglets) et appliquées au chiffrage côté client : prix de l'élément × marge
+ * de son onglet. Stockées dans data/catalogue/marges.json ; défaut = 1.
+ */
+function archicad_marge_kinds(): array
+{
+    return ['charpentes', 'murs', 'planchers', 'toitures', 'menuiseries', 'fenetres_toit', 'systemes_aut', 'surfaces', 'interieurs', 'couvertures'];
+}
+
+function archicad_marges_file(): string
+{
+    return archicad_catalogue_dir() . '/marges.json';
+}
+
+function archicad_marges_load(): array
+{
+    $file = archicad_marges_file();
+    if (!is_file($file)) {
+        return [];
+    }
+    $data = json_decode((string) file_get_contents($file), true);
+    return is_array($data['marges'] ?? null) ? $data['marges'] : [];
+}
+
+// Carte complète kind -> coefficient (1 par défaut pour les rubriques à marge)
+function archicad_marges_all(): array
+{
+    return array_merge(array_fill_keys(archicad_marge_kinds(), 1), array_map('floatval', archicad_marges_load()));
+}
+
+function archicad_marge_get(string $kind): float
+{
+    $m = archicad_marges_load();
+    $v = $m[$kind] ?? 1;
+    return is_numeric($v) ? max(0, (float) $v) : 1;
+}
+
+function archicad_marge_save(string $kind, float $value): void
+{
+    if (!in_array($kind, archicad_marge_kinds(), true)) {
+        return;
+    }
+    if (!is_dir(archicad_catalogue_dir())) {
+        mkdir(archicad_catalogue_dir(), 0775, true);
+    }
+    $m = archicad_marges_load();
+    $m[$kind] = max(0, $value);
+    file_put_contents(archicad_marges_file(), json_encode(['marges' => $m], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+}
+
 function archicad_catalogue_total_items(): int
 {
     return count(archicad_load_catalogue('menuiseries'))

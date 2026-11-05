@@ -431,6 +431,14 @@ function tarifOuverture(o, menuiseries) {
 /* coût au m² d'un élément de catalogue (murs, planchers, toitures, surfaces) */
 const eurM2 = (item) => (item ? +item.tarif || 0 : 0);
 
+/* Coefficient de marge d'une rubrique (champ « Marge » du back-office, zones
+   Catalogue et Revêtements) : appliqué au chiffrage — prix de l'élément × marge
+   de son onglet. Défaut 1 = aucune marge. */
+const margeOf = (env, kind) => {
+  const v = env.marges?.[kind];
+  return v == null || !isFinite(+v) ? 1 : Math.max(0, +v);
+};
+
 /* Murs retenus pour le chiffrage (extérieurs, épaisseurs comprises), avec détail
    par mur : longueur extérieure (ligne directrice + 2 épaisseurs) × hauteur, moins
    les surfaces des ouvrants ; si pignon, + triangle de toiture sur est/ouest et

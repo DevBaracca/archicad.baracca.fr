@@ -587,3 +587,23 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* Champ « Marge » du back-office : fixé à droite de la ligne des onglets */
+.admin-marge-form {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+.admin-marge-form label {
+  font-weight: 600;
+  color: var(--gray);
+}
+.admin-marge-form input[type="number"] {
+  width: 72px;
+  padding: 5px 8px;
+  border: 1px solid var(--gray-border);
+  border-radius: var(--border-radius);
+  font-size: 0.85rem;
+}
