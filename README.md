@@ -272,26 +272,34 @@ Chaque élément porte un champ **tarif** : le configurateur additionne les
 tarifs pour afficher au client le **tarif global** du projet au fur et à
 mesure, repris dans l'export JSON (`metriques.tarif`) :
 
-- **Murs** : (coût au m² du mur + revêtement **extérieur** + revêtement
-  **intérieur**) × surface de chaque mur ;
-- **Complexe de toiture** : (coût au m² de la toiture + revêtement
-  **intérieur** de la sous-face) × surface des pents **sans débords** ;
+- **Murs** : (coût au m² du mur + revêtement **extérieur**) × surface
+  **extérieure** du mur (ligne directrice + 2 épaisseurs) + revêtement
+  **intérieur** × surface **intérieure** (ligne directrice seule, sans les
+  épaisseurs de mur ; ouvrants déduits des deux côtés) ;
+- **Complexe de toiture** : structure (coût au m² de la toiture) × surface des
+  pents sur la **ligne directrice, sans débords** (`areaBase`) + revêtement
+  **intérieur** de la sous-face × surface intérieure du pent (rectangle
+  `ligne directrice − 2 épaisseurs de mur`, projeté selon la pente, sans
+  débords — `areaBaseInt`) ;
 - **Couverture** : coût au m² du revêtement de **toiture** choisi par pent ×
   surface **avec débords** ;
 - **Autonomie** : somme des **coûts unitaires** des systèmes autonomes du
-  pack choisi (rubrique « Autonomie » des réglages généraux).
+  pack choisi (rubrique « Autonomie » des réglages généraux) ;
+- **Fenêtres de toit** : somme des **coûts unitaires** des fenêtres posées
+  sur les pents de toiture.
 
 Stockage : `data/catalogue/` (JSON, hors git, amorcé automatiquement au
 premier chargement avec les valeurs historiques du configurateur), **un
 fichier par rubrique** : `menuiseries.json`, `modules.json`, `murs.json`,
 `planchers.json`, `surfaces.json` (Extérieur), `interieurs.json` (Intérieur),
 `couvertures.json` (Toiture), `toitures.json`, `systemes_aut.json`
-(systèmes autonomes) et `autonomie.json` (packs autonomie) (structure
+(systèmes autonomes), `autonomie.json` (packs autonomie) et
+`fenetres_toit.json` (fenêtres de toit) (structure
 `{"items": [...]}` ; l'ancien fichier unique `enveloppe.json` est éclaté
 automatiquement à la première lecture). L'application React lit les
 catalogues en lecture seule via `php/api_catalogue.php` (menuiseries,
 modules, murs/planchers/surfaces/interieurs/couvertures/toitures,
-systemes_aut/autonomie) ; si l'API est indisponible, elle retombe sur les
+systemes_aut/autonomie/fenetres_toit) ; si l'API est indisponible, elle retombe sur les
 catalogues par défaut définis en tête de `src/App.jsx` (`MURS`, `PLANCHERS`,
 `FACADES`, `INTERIEURS`, `COUVERTURES`, `TOITURES`, `SYSTEMES_AUT`,
 `AUTONOMIES`). La géométrie de toiture reste

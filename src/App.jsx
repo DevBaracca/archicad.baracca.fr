@@ -184,6 +184,24 @@ const intIdOf = (env, id) => {
   return l[0].id;
 };
 
+/* Surface d'un versant côté INTÉRIEUR (sous-face du complexe de toiture) :
+   la ligne directrice de la toiture part de la face EXTÉRIEURE des murs, donc
+   la sous-face intérieure s'obtient sur le rectangle intérieur (ligne
+   directrice - 2 épaisseurs de mur), projeté selon la pente du versant. */
+const toitAreaInt = (dmInt, p1, p2, tt, v, nbV) => {
+  const c1 = Math.cos((p1 * Math.PI) / 180), c2 = Math.cos((p2 * Math.PI) / 180);
+  if (tt === "terrasse") return (dmInt.longueur * dmInt.largeur) / nbV;
+  if (tt === "deuxpentes") {
+    const t1 = Math.tan((p1 * Math.PI) / 180);
+    const hF = hauteurFaitageDm(dmInt, p1, p2, "deuxpentes");
+    const run1 = t1 > 0 ? Math.min(Math.max(hF / t1, 0), dmInt.largeur) : dmInt.largeur / 2;
+    const run2 = dmInt.largeur - run1;
+    return dmInt.longueur * (v === "nord" ? run1 / c1 : run2 / c2);
+  }
+  if (tt === "quatrepentes") return surfaceToitureDm(dmInt, p1, p2, tt) / 4;
+  return dmInt.longueur * (dmInt.largeur / c1); // monopente
+};
+
 /* Liste numérotée des pents de tous les modules (pour le chiffrage et la carte toiture) */
 function pentsOf(d, env) {
   const toitType = toitTypeOf(d, env);
@@ -200,10 +218,13 @@ function pentsOf(d, env) {
   const insts = d.instances?.length ? d.instances : [{ id: "m0", moduleId: d.moduleId }];
   // côtés communs à deux modules ACCOLÉS (mur commun, même profondeur) : pas de débord dessus.
   // eachEdge a besoin de l'épaisseur du MUR (pas de la toiture) pour reconnaître les voisins collés
-  const edges = eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env));
+  const epMur = epMurOf(d, env);
+  const edges = eachEdge(d, (i) => dimsOf(d, env, i), epMur);
   const commun = (instId, face) => edges.some((e) => e.inst.id === instId && e.face === face && !!e.edge);
   insts.forEach((inst, idx) => {
     const dm = dimsOf(d, env, inst);
+    // rectangle intérieur (sous-face) : ligne directrice - 2 épaisseurs de mur
+    const dmInt = { ...dm, longueur: Math.max(0.01, dm.longueur - 2 * epMur), largeur: Math.max(0.01, dm.largeur - 2 * epMur) };
     const nbPigExt = (commun(inst.id, "est") ? 0 : 1) + (commun(inst.id, "ouest") ? 0 : 1); // pignons extérieurs
     const extPerim = FACES.reduce((s, f) => s + (commun(inst.id, f.key) ? 0 : murLongueurDm(dm, f.key)), 0);
     for (const v of keys) {
@@ -224,6 +245,7 @@ function pentsOf(d, env) {
       else { areaBase = dm.longueur * (dm.largeur / c1); area = areaBase + dm.longueur * dep * nbPigExt; } // monopente
       out.push({
         numero: n, instId: inst.id, instIndex: idx + 1, versant: v, area, areaBase,
+        areaBaseInt: toitAreaInt(dmInt, pente1Of(d), pente2Of(d), toitType, v, keys.length), // sous-face intérieure : - 2 épaisseurs de mur
         surfaceId: couvIdOf(env, d.surfacesToiture?.[inst.id]?.[v], toiture?.surface), // revêtement de toiture (catalogue « Toiture »)
         surfaceIntId: intIdOf(env, d.surfacesIntToiture?.[inst.id]?.[v]), // revêtement intérieur (sous-face)
       });
@@ -460,40 +482,49 @@ function mursChiffrage(d, env) {
     if (!e.actif) return;
     const dm = dimsOf(d, env, e.inst); // dims du modèle de ce module
     const hF = hauteurFaitageDm(dm, p1, p2, toitType);
-    const longueurExt = murLongueurDm(dm, e.face) + 2 * epMur; // épaisseurs aux 2 extrémités
-    let area = longueurExt * dm.hauteur;
+    const longueurExt = murLongueurDm(dm, e.face) + 2 * epMur; // épaisseurs aux 2 extrémités (EXTÉRIEUR)
+    const longueurLD = murLongueurDm(dm, e.face);              // ligne directrice seule (INTÉRIEUR)
+    let area = longueurExt * dm.hauteur;    // surface extérieure : mur + revêtement extérieur
+    let areaInt = longueurLD * dm.hauteur;  // surface intérieure : revêtement intérieur, SANS les épaisseurs de mur
     // deux pentes = pignon : triangle de toiture sur est/ouest
     if (toitType === "deuxpentes" && (e.face === "est" || e.face === "ouest")) {
       const base = dm.largeur + 2 * epMur;
       const v1 = (base / 2) / c1, v2 = (base / 2) / c2;  // longueur des 2 versants (pentes propres)
-      area += (base * hF) / 2 + (v1 + v2) * epToit;     // triangle du pignon + ép. toiture sur les 2 versants
+      area += (base * hF) / 2 + (v1 + v2) * epToit;     // triangle du pignon + ép. toiture sur les 2 versants (ext.)
+      areaInt += (dm.largeur * hF) / 2;                // triangle du pignon côté intérieur (ligne directrice)
     }
     // monopente : le mur nord monte droit jusqu'au faitage (hauteur + hF) ;
     // est/ouest ont le triangle de pignon (pan incliné vu de côté)
     if (toitType === "monopente") {
-      if (e.face === "nord") area = longueurExt * (dm.hauteur + hF);
+      if (e.face === "nord") { area = longueurExt * (dm.hauteur + hF); areaInt = longueurLD * (dm.hauteur + hF); }
       else if (e.face === "est" || e.face === "ouest") {
         const base = dm.largeur + 2 * epMur;
-        area += (base * hF) / 2 + (base / c1) * epToit; // triangle de pignon + ép. toiture
+        area += (base * hF) / 2 + (base / c1) * epToit; // triangle de pignon + ép. toiture (ext.)
+        areaInt += (dm.largeur * hF) / 2;              // triangle côté intérieur (ligne directrice)
       }
     }
     // quatre pentes (croupe) et terrasse : les murs restent rectangulaires,
     // ce sont les versants de toiture qui forment les croupes
-    // les ouvrants remplacent de la surface de mur
+    // les ouvrants remplacent de la surface de mur (des deux côtés : ils traversent le mur)
     const ouv = [...(e.a?.ouvertures || []), ...(e.b?.ouvertures || [])];
-    area -= ouv.reduce((ss, o) => ss + o.largeur * o.hauteur, 0);
+    const ouvArea = ouv.reduce((ss, o) => ss + o.largeur * o.hauteur, 0);
+    area -= ouvArea;
+    areaInt -= ouvArea;
     const surfaceId = e.a?.surface ?? murDef?.surface ?? "";
     const surfaceIntId = intIdOf(env, e.a?.surfaceInt); // revêtement intérieur du mur
     const sd = env.facades.find((f) => f.id === surfaceId);
     const sdInt = intListOf(env).find((f) => f.id === surfaceIntId);
-    // (coût mur + revêtement extérieur + revêtement intérieur) × surface du mur
-    const amount = (eurM2(murDef) + eurM2(sd) + eurM2(sdInt)) * area;
+    // mur + revêtement ext sur la surface EXTÉRIEURE (ligne directrice + épaisseurs) ;
+    // revêtement intérieur sur la LIGNE DIRECTRICE seule (sans épaisseurs de mur)
+    const amount = (eurM2(murDef) * margeOf(env, "murs") + eurM2(sd) * margeOf(env, "surfaces")) * area
+      + eurM2(sdInt) * margeOf(env, "interieurs") * areaInt;
     total += area;
     detail.push({
       key: e.edge || `${e.inst.id}-${e.face}`,
       numero: e.numero,
       label: `Mur ${e.numero}` + (e.edge ? " (partagé)" : ""),
-      surfaceId, surfaceIntId, area, amount,
+      instId: e.inst.id, // instance propriétaire de l'arête (promotions)
+      surfaceId, surfaceIntId, area, areaInt, amount,
     });
   });
   return { total, detail };
@@ -686,7 +717,16 @@ function buildExport(d, env) {
           surface: (couvListOf(env).find((f) => f.id === p.surfaceId) || couvListOf(env)[0])?.nom ?? "", // revêtement de toiture (catalogue « Toiture »)
           surface_m2: +p.area.toFixed(2),
           surfaceInterieur: (intListOf(env).find((i) => i.id === p.surfaceIntId) || {}).nom ?? "", // revêtement intérieur (sous-face du pent)
-        })), // un revêtement de toiture + un intérieur par pent de chaque module
+          surfaceInterieur_m2: +(p.areaBaseInt ?? p.areaBase ?? p.area).toFixed(2), // sous-face intérieure : - 2 épaisseurs de mur, sans débords
+          // fenêtres de toit posées sur ce pent (position le long du bas de pente)
+          fenetres: fenetresOfPent(d, p.instId, p.versant).map((f, i) => ({
+            id: `${d.nom}_${p.instId}_FEN_${String(p.versant).toUpperCase()}_${i + 1}`,
+            largeur: f.largeur,
+            hauteur: f.hauteur,
+            position: f.position,
+            favori: env.fenetresToit?.find((x) => x.id === f.fenetreId)?.favori ?? "",
+          })),
+        })), // un revêtement de toiture + un intérieur + des fenêtres de toit par pent de chaque module
         epaisseur: +(+(toitureDef.epaisseur ?? 0.30)).toFixed(3),
         pente: toitType === "terrasse" ? null : pente1Of(d), // pente du versant 1
         pente2: toitType === "deuxpentes" ? pente2Of(d) : null, // pente du versant 2 (deux pentes)
@@ -2633,7 +2673,7 @@ export default function App() {
             </p>
             {chiffrageOpen && surfaces.mursDetail.map((m) => (
               <div className="chiffrage-line" key={m.key}>
-                <span className="chiffrage-left"><span className="chiffrage-k">{m.label}</span><span className="chiffrage-surf">{surfaceNom(m.surfaceId)} · int. {intNom(m.surfaceIntId)} - {fmtM2(m.area)}</span></span>
+                <span className="chiffrage-left"><span className="chiffrage-k">{m.label}</span><span className="chiffrage-surf">{surfaceNom(m.surfaceId)} - {fmtM2(m.area)} · int. {intNom(m.surfaceIntId)} - {fmtM2(m.areaInt)}</span></span>
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(m.amount)} HT</span></span>
               </div>
             ))}
@@ -2645,7 +2685,7 @@ export default function App() {
             </p>
             {pentsBaseOpen && (tarifs.pents || []).map((p) => (
               <div className="chiffrage-line" key={"b" + p.numero}>
-                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">int. {intNom(p.surfaceIntId)} — {fmtM2(p.areaBase ?? p.area)}</span></span>
+                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">int. {intNom(p.surfaceIntId)} — {fmtM2(p.areaBaseInt ?? p.areaBase ?? p.area)}</span></span>
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amountBase)} HT</span></span>
               </div>
             ))}
