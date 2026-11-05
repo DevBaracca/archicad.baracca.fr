@@ -565,49 +565,85 @@ function tarifTotal(d, env) {
   const facade = env.facades.find((f) => f.id === d.facade);
   const toiture = toitureDefOf(d, env);
   const S = surfacesChiffrage(d, env);
-  // Ouvrants : coût à l'unité (une unité par ouverture, murs actifs seulement)
-  const menuiseries = eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).reduce(
-    (s, e) => s + (e.actif
-      ? [...(e.a?.ouvertures || []), ...(e.b?.ouvertures || [])].reduce((ss, o) => ss + tarifOuverture(o, env.menuiseries), 0)
-      : 0),
-    0
-  );
+  // Ouvrants : détail par ouverture (mur, menuiserie, dimensions, position, montant) ;
+  // coût à l'unité, murs actifs seulement
+  const ouvrantsDetail = [];
+  eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).forEach((e) => {
+    if (!e.actif) return;
+    [...(e.a?.ouvertures || []), ...(e.b?.ouvertures || [])].forEach((o, i) => {
+      const m = env.menuiseries?.find((x) => x.id === o.menuiserieId);
+      ouvrantsDetail.push({
+        key: `${e.edge || `${e.inst.id}-${e.face}`}-ouv-${i}`,
+        label: `Mur ${e.numero}` + (e.edge ? " (partagé)" : ""),
+        nom: m?.nom || "Ouverture sur mesure",
+        largeur: o.largeur, hauteur: o.hauteur, position: o.position,
+        amount: tarifOuverture(o, env.menuiseries) * margeOf(env, "menuiseries"),
+      });
+    });
+  });
+  const menuiseries = ouvrantsDetail.reduce((s, o) => s + o.amount, 0);
   // murs : somme des montants par mur (coût mur + revêtement extérieur + revêtement intérieur, × surface)
   const murAmount = S.mursDetail.reduce((s, m) => s + m.amount, 0);
-  // complexe de toiture : tarif de la toiture + revêtement intérieur (sous-face) × surface sur la
-  // ligne directrice (sans débords)
+  // complexe de toiture : structure (toiture × marge Toitures) sur areaBase = ligne
+  // directrice SANS débords ; revêtement intérieur (sous-face × marge Intérieur) sur
+  // areaBaseInt = rectangle intérieur (ligne directrice - 2 épaisseurs de mur), sans débords
   const toitureAmount = (S.pents || []).reduce((s, p) => {
     const sdInt = intListOf(env).find((f) => f.id === p.surfaceIntId);
-    return s + (eurM2(toiture) + eurM2(sdInt)) * (p.areaBase ?? p.area);
+    return s + eurM2(toiture) * margeOf(env, "toitures") * (p.areaBase ?? p.area)
+      + eurM2(sdInt) * margeOf(env, "interieurs") * (p.areaBaseInt ?? p.areaBase ?? p.area);
   }, 0);
-  // couverture : tarif du revêtement de TOITURE choisi pour le pent (catalogue « Toiture »)
+  // couverture : tarif du revêtement de TOITURE choisi × marge Toiture (couvertures)
   // × surface AVEC débords
   const couvertureAmount = (S.pents || []).reduce((s, p) => {
     const sd = couvListOf(env).find((f) => f.id === p.surfaceId);
-    return s + eurM2(sd) * p.area;
+    return s + eurM2(sd) * margeOf(env, "couvertures") * p.area;
   }, 0);
-  // Charpente : coût unitaire de la charpente choisie (Réglages généraux) × nb de côtés en charpente
+  // Charpente : coût unitaire × marge Charpentes × nb de côtés en charpente
   const charpenteDef = env.charpentes?.find((c) => c.id === d.charpente);
-  const charpenteAmount = (charpenteDef ? +charpenteDef.tarif || 0 : 0) * (S.charpentes || 0);
-  // Autonomie : somme des coûts unitaires des systèmes du pack choisi
+  const charpenteAmount = (charpenteDef ? +charpenteDef.tarif || 0 : 0) * margeOf(env, "charpentes") * (S.charpentes || 0);
+  // Autonomie : somme des coûts unitaires × marge systèmes Aut. des systèmes du pack choisi
   const autoDef = env.autonomies?.find((a) => a.id === d.autonomie);
   const systemesSel = (autoDef?.systemes || [])
     .map((sid) => env.systemesAut?.find((s) => s.id === sid))
     .filter(Boolean);
-  const autonomieAmount = systemesSel.reduce((s, sy) => s + (+sy.tarif || 0), 0);
+  // détail du pack autonomie : un système par ligne (nom, dimensions, montant unitaire × marge)
+  const autonomieDetail = systemesSel.map((sy) => ({
+    id: sy.id, nom: sy.nom, largeur: sy.largeur, hauteur: sy.hauteur,
+    amount: (+sy.tarif || 0) * margeOf(env, "systemes_aut"),
+  }));
+  const autonomieAmount = autonomieDetail.reduce((s, sy) => s + sy.amount, 0);
+  // Fenêtres de toit : détail par fenêtre posée (pent, modèle, dimensions, position, montant)
+  const fenetresToitDetail = [];
+  Object.entries(d.fenetresToit || {}).forEach(([instId, perInst]) => {
+    Object.entries(perInst || {}).forEach(([versant, list]) => (list || []).forEach((f, i) => {
+      const m = env.fenetresToit?.find((x) => x.id === f.fenetreId);
+      const p = (S.pents || []).find((pp) => pp.instId === instId && pp.versant === versant);
+      fenetresToitDetail.push({
+        key: `${instId}-${versant}-fen-${i}`,
+        label: p ? `Pent ${p.numero} (module ${p.instIndex}, ${p.versant})` : `${instId} / ${versant}`,
+        nom: m?.nom || "Fenêtre sur mesure",
+        largeur: f.largeur, hauteur: f.hauteur, position: f.position,
+        amount: (m ? +m.tarif || 0 : 0) * margeOf(env, "fenetres_toit"),
+      });
+    }));
+  });
+  const fenetresToitAmount = fenetresToitDetail.reduce((s, f) => s + f.amount, 0);
+  const moduleBrut = module ? +module.tarif || 0 : 0;
   const t = {
-    module: module ? +module.tarif || 0 : 0,
+    module: moduleBrut,
     mur: murAmount,
-    plancher: eurM2(plancher) * S.plancher,
-    facade: facade ? +facade.tarif || 0 : 0,
+    plancher: eurM2(plancher) * margeOf(env, "planchers") * S.plancher,
+    facade: (facade ? +facade.tarif || 0 : 0) * margeOf(env, "surfaces"),
     toiture: toitureAmount,
     couverture: couvertureAmount,
     menuiseries,
     charpente: charpenteAmount,
     autonomie: autonomieAmount,
     autonomieNb: systemesSel.length,
+    fenetresToit: fenetresToitAmount,
+    // détails dépliables (tableaux : exclus de l'export metriques.tarif, filtré aux nombres)
+    ouvrantsDetail, fenetresToitDetail, autonomieDetail,
   };
-  t.total = t.module + t.mur + t.plancher + t.facade + t.toiture + t.couverture + t.menuiseries + t.charpente + t.autonomie;
   // détail par pent (numéro, revêtements, montants) — couverture : revêtement de toiture choisi
   // × surface avec débords ; complexe : (toiture + revêtement intérieur) × surface sans débords
   t.pents = (S.pents || []).map((p) => {
@@ -615,10 +651,58 @@ function tarifTotal(d, env) {
     const sdInt = intListOf(env).find((f) => f.id === p.surfaceIntId);
     return {
       ...p,
-      amount: eurM2(sdCouv) * p.area, // couverture : revêtement toiture, avec débords
-      amountBase: (eurM2(toiture) + eurM2(sdInt)) * (p.areaBase ?? p.area), // complexe de toiture + intérieur, sans débords
+      amount: eurM2(sdCouv) * margeOf(env, "couvertures") * p.area, // couverture : revêtement toiture × marge, avec débords
+      amountBase: eurM2(toiture) * margeOf(env, "toitures") * (p.areaBase ?? p.area) // structure du complexe, sans débords
+        + eurM2(sdInt) * margeOf(env, "interieurs") * (p.areaBaseInt ?? p.areaBase ?? p.area), // sous-face intérieure (- 2 épaisseurs de mur)
     };
   });
+  // Promotion active (code saisi + période en cours + module affecté) : la
+  // réduction s'applique aux ÉLÉMENTS des instances dont le modèle est
+  // concerné (murs, ouvrants, charpente, pents, fenêtres de toit, plancher et
+  // façade au prorata des surfaces) — pas au module lui-même (pas de tarif)
+  // ni à l'autonomie.
+  const promo = promoActive(d, env);
+  let promoBaseAmount = 0;
+  if (promo) {
+    const aff = new Set(promo.modules || []);
+    const insts = d.instances?.length ? d.instances : [{ id: "m0", moduleId: d.moduleId }];
+    const isAff = (instId) => {
+      const i = insts.find((x) => x.id === instId);
+      return !!i && aff.has(i.moduleId || d.moduleId);
+    };
+    // murs (détail par arête, attribués à l'instance propriétaire)
+    promoBaseAmount += S.mursDetail.filter((m) => isAff(m.instId)).reduce((s, m) => s + m.amount, 0);
+    // ouvrants (murs actifs) et charpentes (côtés sans mur), par arête
+    eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).forEach((e) => {
+      if (!isAff(e.inst.id)) return;
+      if (e.actif) {
+        promoBaseAmount += [...(e.a?.ouvertures || []), ...(e.b?.ouvertures || [])]
+          .reduce((ss, o) => ss + tarifOuverture(o, env.menuiseries) * margeOf(env, "menuiseries"), 0);
+      } else {
+        const cd = env.charpentes?.find((c) => c.id === d.charpente);
+        promoBaseAmount += (cd ? +cd.tarif || 0 : 0) * margeOf(env, "charpentes");
+      }
+    });
+    // pents : complexe de toiture + couverture
+    (t.pents || []).forEach((p) => { if (isAff(p.instId)) promoBaseAmount += (p.amountBase || 0) + (p.amount || 0); });
+    // fenêtres de toit, par instance
+    Object.entries(d.fenetresToit || {}).forEach(([instId, perInst]) => {
+      if (!isAff(instId)) return;
+      Object.values(perInst || {}).forEach((list) => (list || []).forEach((f) => {
+        const m = env.fenetresToit?.find((x) => x.id === f.fenetreId);
+        promoBaseAmount += (m ? +m.tarif || 0 : 0) * margeOf(env, "fenetres_toit");
+      }));
+    });
+    // plancher + façade globale au prorata de la surface des modules concernés
+    const totSurf = insts.reduce((s, i) => { const dm = dimsOf(d, env, i); return s + dm.longueur * dm.largeur; }, 0);
+    const affSurf = insts.reduce((s, i) => { if (!isAff(i.id)) return s; const dm = dimsOf(d, env, i); return s + dm.longueur * dm.largeur; }, 0);
+    const share = totSurf > 0 ? affSurf / totSurf : 0;
+    promoBaseAmount += (t.plancher + t.facade) * share;
+  }
+  t.promoBase = promoBaseAmount; // base HT des éléments concernés (0 si pas de promo)
+  t.promo = promo ? -promoBaseAmount * (+promo.reduction || 0) / 100 : 0; // négatif si promo active
+  t.promoInfo = promo ? { code: promo.code, reduction: +promo.reduction } : null;
+  t.total = t.module + t.mur + t.plancher + t.facade + t.toiture + t.couverture + t.menuiseries + t.charpente + t.autonomie + t.fenetresToit + t.promo;
   return t;
 }
 
@@ -1395,9 +1479,15 @@ export default function App() {
   const [chiffrageOpen, setChiffrageOpen] = useState(false); // détail par mur du chiffrage, fermé par défaut
   const [pentsOpen, setPentsOpen] = useState(false); // détail par pent couverture, fermé par défaut
   const [pentsBaseOpen, setPentsBaseOpen] = useState(false); // détail par pent complexe de toiture, fermé par défaut
+  const [ouvrantsOpen, setOuvrantsOpen] = useState(false); // détail des ouvrants, fermé par défaut
+  const [fenetresToitOpen, setFenetresToitOpen] = useState(false); // détail des fenêtres de toit, fermé par défaut
+  const [autonomieOpen, setAutonomieOpen] = useState(false); // détail des systèmes autonomie, fermé par défaut
   const [addOpen, setAddOpen] = useState(false);     // zone d'ajout d'un ouvrant (sous le +)
   const [addMenuiserieId, setAddMenuiserieId] = useState("");
   const [addError, setAddError] = useState("");
+  const [addFenOpen, setAddFenOpen] = useState(false); // zone d'ajout d'une fenêtre de toit (modale toiture)
+  const [addFenId, setAddFenId] = useState("");
+  const [addFenError, setAddFenError] = useState("");
 
   /* ----- Panneaux flottants de la zone principale (plan / élévation) -----
      Les panneaux sont posés directement sur le fond de page (pas de carte) ;
@@ -2720,8 +2810,42 @@ export default function App() {
               </div>
             ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Ouvrants ({surfaces.ouvrants})</span></span><span className="chiffrage-v">{fmtEur(tarifs.menuiseries)} HT</span></div>
+            <p className="section-label carac-toggle" onClick={() => setOuvrantsOpen((o) => !o)}>
+              <span className={"carac-arrow" + (ouvrantsOpen ? " open" : "")}></span>
+              Détail par ouvrant
+            </p>
+            {ouvrantsOpen && (tarifs.ouvrantsDetail || []).map((o) => (
+              <div className="chiffrage-line" key={o.key}>
+                <span className="chiffrage-left"><span className="chiffrage-k">{o.label}</span><span className="chiffrage-surf">{o.nom} — {fmtCm(o.largeur)} × {fmtCm(o.hauteur)} cm, pos. {fmtCm(o.position)} cm</span></span>
+                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(o.amount)} HT</span></span>
+              </div>
+            ))}
+            <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Fenêtres de toit ({surfaces.fenetresToit})</span></span><span className="chiffrage-v">{fmtEur(tarifs.fenetresToit)} HT</span></div>
+            <p className="section-label carac-toggle" onClick={() => setFenetresToitOpen((o) => !o)}>
+              <span className={"carac-arrow" + (fenetresToitOpen ? " open" : "")}></span>
+              Détail par fenêtre de toit
+            </p>
+            {fenetresToitOpen && (tarifs.fenetresToitDetail || []).map((f) => (
+              <div className="chiffrage-line" key={f.key}>
+                <span className="chiffrage-left"><span className="chiffrage-k">{f.label}</span><span className="chiffrage-surf">{f.nom} — {fmtCm(f.largeur)} × {fmtCm(f.hauteur)} cm, pos. {fmtCm(f.position)} cm</span></span>
+                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(f.amount)} HT</span></span>
+              </div>
+            ))}
+            {tarifs.promoInfo && (
+            <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Promotion « {tarifs.promoInfo.code} » (−{tarifs.promoInfo.reduction} %)</span><span className="chiffrage-surf">base {fmtEur(tarifs.promoBase)} HT</span></span><span className="chiffrage-v">{fmtEur(tarifs.promo)} HT</span></div>
+            )}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Charpente ({surfaces.charpentes})</span></span><span className="chiffrage-v">{fmtEur(tarifs.charpente)} HT</span></div>
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Autonomie ({tarifs.autonomieNb ?? 0} système{(tarifs.autonomieNb ?? 0) > 1 ? "s" : ""})</span><span className="chiffrage-surf">{autoSel?.nom || "—"}</span></span><span className="chiffrage-v">{fmtEur(tarifs.autonomie)} HT</span></div>
+            <p className="section-label carac-toggle" onClick={() => setAutonomieOpen((o) => !o)}>
+              <span className={"carac-arrow" + (autonomieOpen ? " open" : "")}></span>
+              Détail par système
+            </p>
+            {autonomieOpen && (tarifs.autonomieDetail || []).map((a) => (
+              <div className="chiffrage-line" key={a.id}>
+                <span className="chiffrage-left"><span className="chiffrage-k">{a.nom}</span><span className="chiffrage-surf">{fmtCm(a.largeur)} × {fmtCm(a.hauteur)} cm</span></span>
+                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(a.amount)} HT</span></span>
+              </div>
+            ))}
           </div>
           )}
           <div className={"chiffrage-total" + (chiffrageCardOpen ? "" : " solo")}>
