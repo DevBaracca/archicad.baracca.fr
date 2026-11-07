@@ -8,7 +8,7 @@ require_once __DIR__ . '/../includes/admin-auth.php';
 require_once __DIR__ . '/../includes/users.php';
 require_once __DIR__ . '/../includes/configurations.php';
 require_once __DIR__ . '/../includes/soumissions.php';
-require_once __DIR__ . '/../includes/catalogue.php';
+require_once __DIR__ . '/../includes/stats.php';
 
 $loginError = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['username'], $_POST['password'])) {
@@ -62,38 +62,32 @@ include __DIR__ . '/../includes/admin-head.php';
       <p>Gérez les comptes clients du configurateur et consultez les configurations soumises, depuis cette interface.</p>
     </div>
     <div class="admin-grid">
-      <div class="admin-card">
-        <h2>Utilisateurs</h2>
-        <p class="admin-stat"><?= archicad_users_count() ?></p>
-        <p>Comptes clients ayant accès au configurateur (inscrits en ligne, profil complet : identité, adresse, référence cadastrale).</p>
-        <a href="utilisateurs.php" class="btn btn-secondary btn-icon" title="Ouvrir les utilisateurs" aria-label="Ouvrir les utilisateurs">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>
-        </a>
+      <div class="admin-card admin-dash-card">
+        <div class="admin-dash-head">
+          <h2><a href="utilisateurs.php" class="admin-dash-link">Utilisateurs <span class="admin-dash-count"><?= archicad_users_count() ?></span></a></h2>
+          <p class="admin-dash-desc">Comptes clients ayant accès au configurateur (inscrits en ligne, profil complet : identité, adresse, référence cadastrale).</p>
+        </div>
       </div>
-      <div class="admin-card">
-        <h2>Soumissions</h2>
-        <p class="admin-stat"><?= archicad_soumissions_count() ?></p>
-        <p>Configurations envoyées à Baracca via le bouton « Soumettre » du configurateur.</p>
-        <a href="soumissions.php" class="btn btn-secondary btn-icon" title="Ouvrir les soumissions" aria-label="Ouvrir les soumissions">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>
-        </a>
+      <div class="admin-card admin-dash-card">
+        <div class="admin-dash-head">
+          <h2><a href="soumissions.php" class="admin-dash-link">Soumissions <span class="admin-dash-count"><?= archicad_soumissions_count() ?></span></a></h2>
+          <p class="admin-dash-desc">Configurations envoyées à Baracca via le bouton « Soumettre » du configurateur.</p>
+        </div>
       </div>
-      <div class="admin-card">
-        <h2>Configurations enregistrées</h2>
-        <p class="admin-stat"><?= archicad_configurations_total() ?></p>
-        <p>Configurations enregistrées par les clients dans leur espace (onglet « Export JSON » du configurateur). Elles restent la propriété de chaque client.</p>
-        <a href="../configurateur.php" class="btn btn-secondary btn-icon" target="_blank" title="Ouvrir le configurateur" aria-label="Ouvrir le configurateur">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>
-        </a>
+      <div class="admin-card admin-dash-card">
+        <div class="admin-dash-head">
+          <h2><a href="../configurateur.php" target="_blank" class="admin-dash-link">Configurations enregistrées <span class="admin-dash-count"><?= archicad_configurations_total() ?></span></a></h2>
+          <p class="admin-dash-desc">Configurations enregistrées par les clients dans leur espace (onglet « Export JSON » du configurateur). Elles restent la propriété de chaque client.</p>
+        </div>
       </div>
-      <div class="admin-card">
-        <h2>Configurateur</h2>
-        <p class="admin-stat"><?= archicad_catalogue_total_items() ?></p>
-        <p>Éléments des catalogues proposés aux clients dans le configurateur : ouvrants, modules, formes de toiture, charpentes, enveloppe (murs, planchers, toitures) et revêtements (Extérieur, Intérieur, Toiture), avec leurs tarifs et favoris Archicad.</p>
-        <a href="configurateur.php" class="btn btn-secondary btn-icon" title="Ouvrir le configurateur (catalogues)" aria-label="Ouvrir le configurateur (catalogues)">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 7h8v8"/></svg>
-        </a>
+      <div class="admin-card admin-dash-card">
+        <div class="admin-dash-head">
+          <h2><a href="administrateurs.php" class="admin-dash-link">Administrateurs <span class="admin-dash-count"><?= count(archicad_load_admins()) ?></span></a></h2>
+          <p class="admin-dash-desc">Comptes administrateurs du back-office (ajout, changement de mot de passe, suppression du dernier excepté). Le compte initial vient de <code>config.php</code>.</p>
+        </div>
       </div>
     </div>
 <?php
+// Statistiques d'utilisation (graphiques) sous les cartes du tableau de bord
+include __DIR__ . '/../includes/admin-stats.php';
 include __DIR__ . '/../includes/admin-footer.php';

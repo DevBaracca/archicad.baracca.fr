@@ -32,6 +32,9 @@ if ($record === null) {
     exit;
 }
 
+// Métrique : date de la dernière soumission du client
+archicad_touch_soumission((string) $user['id']);
+
 // Avertissement e-mail à l'architecte : le dossier est à regarder,
 // le fichier JSON est à récupérer dans le back-office.
 $mailEnvoye = archicad_notifier_soumission($record, $data);

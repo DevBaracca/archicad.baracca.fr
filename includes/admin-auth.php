@@ -21,11 +21,109 @@ function archicad_admin_is_logged_in(): bool
     return !empty($_SESSION['archicad_admin']);
 }
 
+// ---------------------------------------------------------------------------
+// Comptes administrateurs du configurateur (data/admins.json, hash bcrypt).
+// Amorçage : au premier chargement, le compte défini dans config.php
+// (ARCHICAD_ADMIN_USERNAME / ARCHICAD_ADMIN_PASSWORD_HASH) est repris dans
+// le fichier ; ensuite la gestion se fait depuis admin/administrateurs.php.
+// ---------------------------------------------------------------------------
+
+function archicad_admins_file(): string
+{
+    return ARCHICAD_DATA_DIR . '/admins.json';
+}
+
+function archicad_load_admins(): array
+{
+    $file = archicad_admins_file();
+    if (!is_file($file)) {
+        // Amorçage depuis config.php (compte historique)
+        $admins = [[
+            'id' => 'admin-legacy',
+            'username' => ARCHICAD_ADMIN_USERNAME,
+            'hash' => ARCHICAD_ADMIN_PASSWORD_HASH,
+            'created' => date('Y-m-d'),
+        ]];
+        if (!is_dir(ARCHICAD_DATA_DIR)) {
+            mkdir(ARCHICAD_DATA_DIR, 0775, true);
+        }
+        file_put_contents($file, json_encode(['admins' => $admins], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+        return $admins;
+    }
+    $data = json_decode((string) file_get_contents($file), true);
+    return is_array($data['admins'] ?? null) ? $data['admins'] : [];
+}
+
+function archicad_save_admins(array $admins): bool
+{
+    if (!is_dir(ARCHICAD_DATA_DIR)) {
+        mkdir(ARCHICAD_DATA_DIR, 0775, true);
+    }
+    return file_put_contents(archicad_admins_file(), json_encode(['admins' => array_values($admins)], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX) !== false;
+}
+
+function archicad_find_admin_by_username(string $username): ?array
+{
+    foreach (archicad_load_admins() as $admin) {
+        if (hash_equals(strtolower((string) ($admin['username'] ?? '')), strtolower($username))) {
+            return $admin;
+        }
+    }
+    return null;
+}
+
+function archicad_admin_add(string $username, string $password): array|false
+{
+    $username = trim($username);
+    if ($username === '' || strlen($password) < 8 || archicad_find_admin_by_username($username) !== null) {
+        return false;
+    }
+    $admins = archicad_load_admins();
+    $admin = [
+        'id' => bin2hex(random_bytes(8)),
+        'username' => $username,
+        'hash' => password_hash($password, PASSWORD_DEFAULT),
+        'created' => date('Y-m-d'),
+    ];
+    $admins[] = $admin;
+    return archicad_save_admins($admins) ? $admin : false;
+}
+
+function archicad_admin_set_password(string $id, string $password): bool
+{
+    $admins = archicad_load_admins();
+    foreach ($admins as $i => $admin) {
+        if (($admin['id'] ?? '') === $id) {
+            $admins[$i]['hash'] = password_hash($password, PASSWORD_DEFAULT);
+            return archicad_save_admins($admins);
+        }
+    }
+    return false;
+}
+
+// Suppression d'un administrateur (impossible de supprimer le dernier)
+function archicad_admin_delete(string $id): bool
+{
+    $admins = archicad_load_admins();
+    if (count($admins) <= 1) {
+        return false;
+    }
+    foreach ($admins as $i => $admin) {
+        if (($admin['id'] ?? '') === $id) {
+            unset($admins[$i]);
+            return archicad_save_admins($admins);
+        }
+    }
+    return false;
+}
+
 function archicad_admin_login(string $username, string $password): bool
 {
-    if (hash_equals(ARCHICAD_ADMIN_USERNAME, $username) && password_verify($password, ARCHICAD_ADMIN_PASSWORD_HASH)) {
+    $admin = archicad_find_admin_by_username($username);
+    if ($admin !== null && password_verify($password, (string) $admin['hash'])) {
         session_regenerate_id(true);
         $_SESSION['archicad_admin'] = true;
+        $_SESSION['archicad_admin_username'] = (string) $admin['username'];
         return true;
     }
     return false;

@@ -1470,9 +1470,9 @@ export default function App() {
   const [reglageOpen, setReglageOpen] = useState("formes"); // rubrique ouverte dans « Réglages généraux » (accordéon)
   const [addPick, setAddPick] = useState(null); // { instId, side } : choix du modèle à ajouter via le + du plan
   const [chiffrageCardOpen, setChiffrageCardOpen] = useState(false); // carte Chiffrage réduite par défaut (bande grise seule)
-  const [sauvOpen, setSauvOpen] = useState(false); // carte Sauvegardes fermée par défaut
+  const [sauvOpen, setSauvOpen] = useState(false); // pop-up « Sauvegardes » fermée par défaut
   const [reglagesOpen, setReglagesOpen] = useState(false); // conteneurs de la première ligne repliés au démarrage
-  const [soumettreOpen, setSoumettreOpen] = useState(false); // conteneur Soumettre fermé par défaut
+  const [soumettreOpen, setSoumettreOpen] = useState(false); // pop-up « Soumettre » fermée par défaut
   const [murOpen, setMurOpen] = useState(false); // pop-up Mur/Toiture : ouverte uniquement au clic sur le plan
   const [flash, setFlash] = useState("");
   const [caracOpen, setCaracOpen] = useState(false); // zone « Caractéristiques techniques » fermée par défaut
@@ -1690,7 +1690,7 @@ export default function App() {
   const tarifs = useMemo(() => tarifTotal(d, env), [d, catalogue]); // eslint-disable-line react-hooks/exhaustive-deps
   const surfaces = useMemo(() => surfacesChiffrage(d, env), [d, catalogue]); // eslint-disable-line react-hooks/exhaustive-deps
   const pentsAll = pentsOf(d, env); // pents numérotés de tous les modules
-  // Indice de validité du code promotion saisi (rubrique « Promotion »)
+  // Indice de validité du code promotion saisi (bande grisée du chiffrage)
   const promo = promoActive(d, env);
   const promoCodeSaisi = String(d.promoCode || "").trim();
   const promoHint = !promoCodeSaisi
@@ -2178,7 +2178,108 @@ export default function App() {
     <div className="app">
       <div className="layout">
       <div className="left-col">
-        <p className="submit-hint">Appuyez sur le bouton à droite pour nous soumettre votre projet, nous répondrons dans les meilleurs délais</p>
+      {/* Ligne « hint + Sauvegardes » en tableau : texte à gauche, bouton à droite
+          (aligné avec le bouton Soumettre en haut de la colonne de droite) */}
+      <div className="submit-hint-row">
+        <p className="submit-hint">Utilisez les boutons pour enregistrer ou soumettre votre projet — nous répondons dans les meilleurs délais</p>
+        <button type="button" className="action-btn" onClick={() => setSauvOpen(true)} title="Ouvrir la fenêtre Sauvegardes">Sauvegardes</button>
+      </div>
+      {soumettreOpen && (
+      <div className="modal-overlay center" onClick={() => setSoumettreOpen(false)}>
+        <div className="card modal" onClick={(e) => e.stopPropagation()}>
+          <div className="card-title modal-title">
+            <span>Soumettre</span>
+            <button type="button" className="icon-btn danger" onClick={() => setSoumettreOpen(false)} title="Fermer" aria-label="Fermer">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+            </button>
+          </div>
+          <div className="card-body modal-body">
+            <span className={"badge" + (nbErreurs ? " error" : "")}>
+              {nbErreurs === 0 ? "Configuration valide" : `${nbErreurs} erreur(s)`}
+            </span>
+            <div className="mesinfos-actions">
+              <button
+                className="btn primary"
+                onClick={soumettre}
+                disabled={submitting || !session?.loggedIn}
+                title={session?.loggedIn ? "Avertir l'architecte (dev@baracca.fr) que ce dossier est prêt à être examiné" : "Connectez-vous pour soumettre"}
+              >
+                {submitting ? "Envoi…" : "Soumettre"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      )}
+      {sauvOpen && (
+      <div className="modal-overlay center" onClick={() => setSauvOpen(false)}>
+        <div className="card modal" onClick={(e) => e.stopPropagation()}>
+          <div className="card-title modal-title">
+            <span>Sauvegardes</span>
+            <button type="button" className="icon-btn danger" onClick={() => setSauvOpen(false)} title="Fermer" aria-label="Fermer">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+            </button>
+          </div>
+          <div className="card-body modal-body">
+            {session && session.loggedIn ? (
+              <div className="account-box">
+                <div className="account-head">
+                  <strong>Mes configurations</strong>
+                  <span className="account-user" title="Login de connexion">
+                    {session.user.email}
+                  </span>
+                </div>
+                <div className="save-row">
+                  <input
+                    type="text"
+                    placeholder={d.nom || "Nom de la configuration"}
+                    value={saveName}
+                    onChange={(e) => setSaveName(e.target.value)}
+                  />
+                  <button className="btn small" onClick={enregistrer}>Enregistrer cette configuration</button>
+                </div>
+                {configMsg && <div className="field-error" style={{ color: "#059669" }}>{configMsg}</div>}
+                {configs.length > 0 ? (
+                  <ul className="config-list">
+                    {configs.map((c) => (
+                      <li key={c.id} className="config-row">
+                        <div>
+                          <strong>{c.nom}</strong>
+                          <span className="config-date">modifiée le {c.updated}</span>
+                        </div>
+                        <div className="config-actions">
+                          <button className="btn small" onClick={() => chargerConfig(c.id)}>Charger</button>
+                          <button className="btn ghost small" onClick={() => supprimerConfig(c.id)}>Supprimer</button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="config-empty">Aucune configuration enregistrée pour le moment.</p>
+                )}
+                <p className="config-hint">
+                  Retrouvez aussi vos configurations sur <a href="/compte.php" target="_blank">votre espace client</a>.
+                </p>
+              </div>
+            ) : session ? (
+              <div className="account-box">
+                <strong>Enregistrement et soumission réservés aux comptes clients</strong>
+                <p className="config-hint">
+                  <a href="/inscription.php" target="_blank">Créer un compte</a> ou{" "}
+                  <a href="/connexion.php" target="_blank">se connecter</a> pour enregistrer
+                  vos configurations et les soumettre à Baracca.
+                </p>
+              </div>
+            ) : null}
+            {flash && <div className="field-error" style={{ marginBottom: 8, color: "#059669" }}>{flash}</div>}
+            <div className="chiffrage-row" style={{ marginTop: 8 }}>
+              <span className="k">Dernière sauvegarde</span>
+              <span className="v">{lastConfig ? `${lastConfig.nom} — ${lastConfig.updated}` : "Aucune"}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      )}
       <div className="stage" ref={stageRef} style={{ height: stageH }}>
         <div className="panel" ref={(el) => { panelRefs.current.plan = el; }} style={{ left: panels.plan.x, top: panels.plan.y }}>
           <div className="panel-handle panel-fixed" title="Plan (fixé en haut à gauche)">
@@ -2259,31 +2360,8 @@ export default function App() {
       </div>
       </div>
       <div className="side-col">
-      <div className={"card panel-card soumettre-card" + (soumettreOpen ? " deplie" : "")}>
-        <div className="card-title card-toggle" onClick={() => setSoumettreOpen((o) => !o)} title={soumettreOpen ? "Replier" : "Ouvrir le conteneur Soumettre"}>
-          <span className={"carac-arrow" + (soumettreOpen ? " open" : "")}></span>
-          Soumettre
-        </div>
-        <div className="card-body" style={soumettreOpen ? undefined : { padding: 0 }}>
-          {soumettreOpen && (
-          <>
-          <span className={"badge" + (nbErreurs ? " error" : "")}>
-            {nbErreurs === 0 ? "Configuration valide" : `${nbErreurs} erreur(s)`}
-          </span>
-          <div className="mesinfos-actions">
-            <button
-              className="btn primary"
-              onClick={soumettre}
-              disabled={submitting || !session?.loggedIn}
-              title={session?.loggedIn ? "Avertir l'architecte (dev@baracca.fr) que ce dossier est prêt à être examiné" : "Connectez-vous pour soumettre"}
-            >
-              {submitting ? "Envoi…" : "Soumettre"}
-            </button>
-          </div>
-          </>
-          )}
-        </div>
-      </div>
+      {/* Bouton Soumettre en haut de la colonne de droite (niveau du plan) : clic = pop-up centrée */}
+      <button type="button" className="action-btn action-btn-block" onClick={() => setSoumettreOpen(true)} title="Ouvrir la fenêtre Soumettre">Soumettre</button>
       <div className={"card panel-card" + (reglagesOpen ? " deplie" : "")}>
         <div className="card-title card-toggle" onClick={() => setReglagesOpen((o) => !o)} title={reglagesOpen ? "Replier les réglages généraux" : "Ouvrir les réglages généraux"}>
           <span className={"carac-arrow" + (reglagesOpen ? " open" : "")}></span>
@@ -2371,20 +2449,6 @@ export default function App() {
                   detail={`ép. ${fmtCm(+(c.epaisseur ?? 0.20))} cm${+c.tarif > 0 ? ` — ${fmtEur(c.tarif)} HT` : ""}`}
                 />
               ))}
-            </div>
-          </Rubrique>
-          <Rubrique
-            titre="Promotion"
-            hint="Saisissez un code promotionnel : s'il est actif (date du jour dans la période) et affecté au module choisi, la réduction s'applique au prix du module dans le chiffrage."
-            ouvert={reglageOpen === "promo"}
-            onToggle={() => setReglageOpen(reglageOpen === "promo" ? null : "promo")}
-          >
-            <div className="field">
-              <label>Code promotion</label>
-              <input type="text" value={d.promoCode || ""} placeholder="CODE"
-                style={{ textTransform: "uppercase" }}
-                onChange={(e) => set({ promoCode: e.target.value })} />
-              <span className="config-hint" style={{ marginTop: 0 }}>{promoHint}</span>
             </div>
           </Rubrique>
           </div>
@@ -2831,9 +2895,6 @@ export default function App() {
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(f.amount)} HT</span></span>
               </div>
             ))}
-            {tarifs.promoInfo && (
-            <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Promotion « {tarifs.promoInfo.code} » (−{tarifs.promoInfo.reduction} %)</span><span className="chiffrage-surf">base {fmtEur(tarifs.promoBase)} HT</span></span><span className="chiffrage-v">{fmtEur(tarifs.promo)} HT</span></div>
-            )}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Charpente ({surfaces.charpentes})</span></span><span className="chiffrage-v">{fmtEur(tarifs.charpente)} HT</span></div>
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Autonomie ({tarifs.autonomieNb ?? 0} système{(tarifs.autonomieNb ?? 0) > 1 ? "s" : ""})</span><span className="chiffrage-surf">{autoSel?.nom || "—"}</span></span><span className="chiffrage-v">{fmtEur(tarifs.autonomie)} HT</span></div>
             <p className="section-label carac-toggle" onClick={() => setAutonomieOpen((o) => !o)}>
@@ -2849,75 +2910,24 @@ export default function App() {
           </div>
           )}
           <div className={"chiffrage-total" + (chiffrageCardOpen ? "" : " solo")}>
+            {/* Partie grisée du chiffrage : prix HT avant promotion, puis code promotion
+                et montant de la réduction, trait fin de séparation avant le coût estimatif */}
+            <div className="promo-band">
+              <div className="chiffrage-row"><span className="k">Prix HT avant promotion</span><span className="v">{fmtEur(tarifs.total - tarifs.promo)} HT</span></div>
+              <label htmlFor="promo-code-input">Promotion</label>
+              <input id="promo-code-input" type="text" value={d.promoCode || ""} placeholder="CODE"
+                onChange={(e) => set({ promoCode: e.target.value })} />
+              <span className="config-hint">{promoHint}</span>
+              {tarifs.promoInfo && (
+              <div className="chiffrage-row promo-reduction">
+                <span className="k">Réduction « {tarifs.promoInfo.code} » (−{tarifs.promoInfo.reduction} %)</span>
+                <span className="v">{fmtEur(tarifs.promo)} HT</span>
+              </div>
+              )}
+            </div>
             <div className="chiffrage-row"><span className="k">Coût estimatif</span><span className="v">{fmtEur(tarifs.total)} HT</span></div>
             <div className="chiffrage-row"><span className="k">TVA (20 %)</span><span className="v">{fmtEur(tarifs.total * 0.20)}</span></div>
             <div className="chiffrage-row total"><span className="k">Coût TTC</span><span className="v">{fmtEur(tarifs.total * 1.20)}</span></div>
-          </div>
-        </div>
-      </div>
-      <div className={"card panel-card" + (sauvOpen ? " deplie" : "")}>
-        <div className="card-title card-toggle" onClick={() => setSauvOpen((o) => !o)} title={sauvOpen ? "Replier les sauvegardes" : "Ouvrir les sauvegardes"}>
-          <span className={"carac-arrow" + (sauvOpen ? " open" : "")}></span>
-          Sauvegardes
-        </div>
-        <div className="card-body" style={sauvOpen ? undefined : { padding: 0 }}>
-              {sauvOpen && (session && session.loggedIn ? (
-                <div className="account-box">
-                  <div className="account-head">
-                    <strong>Mes configurations</strong>
-                    <span className="account-user" title="Login de connexion">
-                      {session.user.email}
-                    </span>
-                  </div>
-                  <div className="save-row">
-                    <input
-                      type="text"
-                      placeholder={d.nom || "Nom de la configuration"}
-                      value={saveName}
-                      onChange={(e) => setSaveName(e.target.value)}
-                    />
-                    <button className="btn small" onClick={enregistrer}>Enregistrer cette configuration</button>
-                  </div>
-                  {configMsg && <div className="field-error" style={{ color: "#059669" }}>{configMsg}</div>}
-                  {configs.length > 0 ? (
-                    <ul className="config-list">
-                      {configs.map((c) => (
-                        <li key={c.id} className="config-row">
-                          <div>
-                            <strong>{c.nom}</strong>
-                            <span className="config-date">modifiée le {c.updated}</span>
-                          </div>
-                          <div className="config-actions">
-                            <button className="btn small" onClick={() => chargerConfig(c.id)}>Charger</button>
-                            <button className="btn ghost small" onClick={() => supprimerConfig(c.id)}>Supprimer</button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="config-empty">Aucune configuration enregistrée pour le moment.</p>
-                  )}
-                  <p className="config-hint">
-                    Retrouvez aussi vos configurations sur <a href="/compte.php" target="_blank">votre espace client</a>.
-                  </p>
-                </div>
-              ) : session ? (
-                <div className="account-box">
-                  <strong>Enregistrement et soumission réservés aux comptes clients</strong>
-                  <p className="config-hint">
-                    <a href="/inscription.php" target="_blank">Créer un compte</a> ou{" "}
-                    <a href="/connexion.php" target="_blank">se connecter</a> pour enregistrer
-                    vos configurations et les soumettre à Baracca.
-                  </p>
-                </div>
-              ) : null)}
-
-              {sauvOpen && flash && <div className="field-error" style={{ marginBottom: 8, color: "#059669" }}>{flash}</div>}
-          <div className={"chiffrage-total" + (sauvOpen ? "" : " solo")}>
-            <div className="chiffrage-row">
-              <span className="k">Dernière sauvegarde</span>
-              <span className="v">{lastConfig ? `${lastConfig.nom} — ${lastConfig.updated}` : "Aucune"}</span>
-            </div>
           </div>
         </div>
       </div>

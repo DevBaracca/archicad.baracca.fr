@@ -37,6 +37,7 @@ include __DIR__ . '/../includes/admin-head.php';
               <th>Téléphone</th>
               <th>Réf. cadastrale</th>
               <th>Configs</th>
+              <th>Dernière connexion</th>
               <th>Inscrit le</th>
             </tr>
           </thead>
@@ -50,6 +51,7 @@ include __DIR__ . '/../includes/admin-head.php';
                 <td><?= htmlspecialchars((string) ($user['telephone'] ?? '')) ?></td>
                 <td><?= htmlspecialchars((string) ($user['reference_cadastrale'] ?? '')) ?></td>
                 <td><?= archicad_count_configurations((string) ($user['id'] ?? '')) ?></td>
+                <td><?= ($user['last_login'] ?? '') !== '' ? htmlspecialchars((string) $user['last_login']) : '—' ?></td>
                 <td><?= htmlspecialchars((string) ($user['created'] ?? '')) ?></td>
               </tr>
             <?php endforeach; ?>

@@ -49,7 +49,16 @@ include 'includes/head.html';
           </div>
           <div class="form-group">
             <label for="password">Mot de passe</label>
-            <input type="password" id="password" name="password" required autocomplete="current-password">
+            <div class="password-field">
+              <input type="password" id="password" name="password" required autocomplete="current-password">
+              <button type="button" class="password-toggle" id="password-toggle" aria-label="Afficher le mot de passe" title="Afficher / masquer le mot de passe">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <line class="eye-slash" x1="4" y1="4" x2="20" y2="20"></line>
+                </svg>
+              </button>
+            </div>
           </div>
           <div class="auth-actions">
             <button type="submit" class="btn btn-cta">Se connecter</button>
@@ -59,5 +68,21 @@ include 'includes/head.html';
       </div>
     </div>
   </section>
+
+<script>
+  // Bascule afficher/masquer le mot de passe (icône œil)
+  (function () {
+    var btn = document.getElementById('password-toggle');
+    var input = document.getElementById('password');
+    if (!btn || !input) return;
+    btn.addEventListener('click', function () {
+      var show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.classList.toggle('visible', show);
+      btn.setAttribute('aria-label', show ? 'Masquer le mot de passe' : 'Afficher le mot de passe');
+      btn.title = show ? 'Masquer le mot de passe' : 'Afficher le mot de passe';
+    });
+  })();
+</script>
 
 <?php include 'includes/footer.php'; ?>

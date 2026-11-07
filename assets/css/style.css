@@ -2897,3 +2897,85 @@ img, picture, video, canvas, svg {
     width: 130px;
   }
 }
+
+/* Champ mot de passe avec bascule œil (afficher/masquer) */
+.password-field {
+  position: relative;
+}
+.password-field input {
+  padding-right: 44px;
+}
+.password-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--gray);
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  line-height: 0;
+}
+.password-toggle:hover {
+  color: var(--primary);
+}
+.password-toggle .eye-slash {
+  display: none;
+}
+.password-toggle.visible .eye-slash {
+  display: block;
+}
+
+/* Bouton danger (suppression) côté client */
+.btn-danger {
+  background: #b91c1c;
+  color: #fff;
+  border: 1px solid #b91c1c;
+}
+.btn-danger:hover {
+  background: #991b1b;
+  border-color: #991b1b;
+}
+
+/* Zone modifiable de la page compte (fond gris, champs empilés) */
+.profile-edit {
+  background: var(--gray-light);
+  border: 1px solid var(--gray-border);
+  border-radius: var(--border-radius);
+  padding: var(--spacing-lg);
+  margin: var(--spacing-lg) 0;
+}
+.auth-grid.stack {
+  grid-template-columns: 1fr;
+  margin-top: 0;
+}
+.profile-edit .auth-separator {
+  margin: var(--spacing-lg) 0;
+}
+
+/* Ligne de configuration (page compte) : nom + boutons Charger / Supprimer sur la même ligne */
+.config-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn-charger {
+  background: #2563eb;
+  border: 1px solid #2563eb;
+  color: #fff;
+}
+.btn-charger:hover {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+.btn-suppr {
+  line-height: 0;
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+.btn-suppr svg {
+  display: block;
+}

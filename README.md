@@ -26,7 +26,7 @@ configurateur.php              Page d'intégration de l'application (iframe) —
 inscription.php                Création d'un compte client (accès au configurateur)
 connexion.php                  Connexion client (email = identifiant)
 deconnexion.php                Déconnexion client
-compte.php                     Espace client : profil + configurations enregistrées
+compte.php                     Espace client : profil (modifiable, réf. cadastrale), mot de passe, configurations (ouvrir/supprimer)
 mentions-legales.php           Pages légales
 cgu.php
 politique-confidentialite.php
@@ -43,7 +43,7 @@ includes/catalogue.php         Catalogues du configurateur (menuiseries, modèle
 includes/admin-auth.php        Session administrateur + CSRF
 includes/admin-head.php        En-tête du back-office
 includes/admin-footer.php      Pied de page du back-office
-admin/                         Back-office (tableau de bord, utilisateurs, soumissions, catalogues)
+admin/                         Back-office (tableau de bord, utilisateurs, administrateurs, soumissions, catalogues)
 assets/                        CSS, JS, images du site (dont admin.css pour le back-office)
 configurateur/                 Application React compilée (générée par le build)
 src/                           Source React de l'application (Vite, racine = src/)
@@ -67,29 +67,60 @@ Depuis l'onglet « Export JSON » du configurateur, un client connecté peut :
 - **enregistrer** sa configuration pour la reprendre ultérieurement (bouton
   « Enregistrer cette configuration », liste « Mes configurations » avec
   Charger / Supprimer) — les configurations sont aussi listées sur `compte.php`,
-  qui permet de les rouvrir directement dans le configurateur (`?config=<id>`) ;
+  qui permet de les rouvrir directement dans le configurateur (`?config=<id>`)
+  **et de les supprimer** ; `compte.php` permet aussi de **modifier son profil**
+  (y compris l'email identifiant et la **référence cadastrale**) et de
+  **changer son mot de passe** (mot de passe actuel demandé, CSRF) ;
 - **soumettre** son dossier (bouton « Soumettre ») : la configuration est
   enregistrée dans `data/soumissions/` et l'architecte est averti par e-mail
   (`dev@baracca.fr`) ; il retrouve le fichier JSON correspondant dans le
   back-office (`admin/soumissions.php`).
 
+**Tableau de bord « Statistiques d'utilisation »** (`admin/index.php`, calculs dans
+`includes/stats.php`, vue `includes/admin-stats.php`, graphiques en barres CSS +
+heatmap, sans dépendance externe) : KPIs (utilisateurs, configs, soumissions, taux
+de conversion, délai moyen 1ʳᵉ config → 1ʳᵉ soumission, ouvrants/fenêtres de toit
+posés, comptes dormants +30 j), heatmap des connexions 7 j × 24 h (log
+`data/metriques.jsonl` alimenté à chaque login), conversion par utilisateur (top 10),
+répartition du nombre de modules par projet, et tops catalogue (modules, formes,
+murs, planchers, complexe de toiture, couverture, revêtements ext/int, sous-face
+de toiture, autonomie, ouvrants, fenêtres de toit) agrégés sur toutes les
+configurations enregistrées (ancien schéma toléré).
+
+**Métriques d'utilisation** : chaque compte client (`data/users.json`) enregistre
+`created` (date de création), le nombre de configurations, `last_login`
+(dernière connexion, au login), `last_soumission` (dernière soumission, au clic
+« Soumettre ») et le temps de connexion par session (`sessions`,
+`session_seconds`, `last_session_seconds`, clôturée au logout ou au login
+suivant si la session est restée ouverte, plafonnée à 24 h). Affichées dans le
+back-office : colonne « Dernière connexion » sur `admin/utilisateurs.php` et
+carte « Statistiques d'utilisation » sur la fiche `admin/utilisateur.php`.
+
 Le **back-office** (`/admin/`) permet de gérer les comptes clients
-(réinitialiser un mot de passe, supprimer un compte et ses configurations),
-de consulter les soumissions et de gérer les **catalogues du configurateur**
-(lien « Configurateur » dans le menu). Identifiants par défaut (à changer dans
-`config.php` après la première connexion) : `admin` / `Baracca2025!`.
+(**modifier leurs informations** depuis la fiche `admin/utilisateur.php`,
+réinitialiser un mot de passe, supprimer un compte et ses configurations),
+de consulter les soumissions, de gérer les **catalogues du configurateur**
+(lien « Configurateur » dans le menu) et de gérer les **administrateurs**
+(`admin/administrateurs.php` : ajout, changement de mot de passe, suppression
+sauf le dernier). Les administrateurs sont stockés dans `data/admins.json` ;
+au premier chargement, le compte défini dans `config.php`
+(`ARCHICAD_ADMIN_USERNAME` / `ARCHICAD_ADMIN_PASSWORD_HASH`, ex. `admin` /
+`Baracca2025!`) y est repris automatiquement, puis la gestion se fait depuis
+la page « Administrateurs » du menu.
 
 Stockage : fichiers JSON dans `data/` (même modèle que les sites invest et
 blog), sans base de données. Le dossier est interdit au web par `data/.htaccess`
 et son contenu n'est pas versionné (voir `.gitignore`).
 
-Pour définir un nouveau mot de passe administrateur, générez son hash bcrypt :
+Pour définir un nouveau mot de passe administrateur, deux possibilités :
+changer le mot de passe depuis la page « Administrateurs » du back-office
+(`admin/administrateurs.php`), ou — pour le compte d'amorçage uniquement —
+générer un hash bcrypt et remplacer `ARCHICAD_ADMIN_PASSWORD_HASH` dans
+`config.php` :
 
 ```bash
 php -r "echo password_hash('votre_mot_de_passe', PASSWORD_DEFAULT);"
 ```
-
-puis remplacez `ARCHICAD_ADMIN_PASSWORD_HASH` dans `config.php`.
 
 ## Déployer
 

@@ -257,8 +257,8 @@ footer.foot { margin-top: 12px; font-size: 0.72rem; color: #a8a29e; text-align: 
   .layout { display: flex; flex-direction: column; }
   .left-col { display: contents; }
   .side-col { display: contents; }
-  .submit-hint { order: -2; }
-  .soumettre-card { order: -1; }
+  .submit-hint-row { order: -2; width: 100%; } /* ligne hint + bouton Sauvegardes au-dessus du Plan */
+  .action-btn-block { order: -1; width: 100%; } /* bouton Soumettre au-dessus du Plan */
   .side-col { width: 100%; margin: 0; }
   .stage { height: auto !important; }
   .panel, .panel-card { position: static; width: 100% !important; height: auto !important; margin: 0 0 16px; }
@@ -299,7 +299,41 @@ footer.foot { margin-top: 12px; font-size: 0.72rem; color: #a8a29e; text-align: 
 .reglages-wrap .metric { background: #e7e5e4; border: none; } /* cases gris clair, sans contour, 10 px du fond gris */
 /* phrase au-dessus du Plan (colonne de gauche, ligne 1) ; hauteur calée sur le
    conteneur Soumettre replié (colonne de droite) pour aligner Plan et Réglages */
-.submit-hint { font-size: 1rem; color: var(--muted); margin: 0 0 10px; min-height: 52px; display: flex; align-items: center; } /* même hauteur que le titre Soumettre replié + gap 10 -> Plan aligné avec Réglages */
+.submit-hint { font-size: 1rem; color: var(--muted); margin: 0 0 10px; }
+/* Ligne « hint + bouton Sauvegardes » en tableau : texte à gauche, bouton aligné à droite
+   (donc aligné avec le bouton Soumettre en haut de la colonne de droite) */
+.submit-hint-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; }
+.submit-hint-row .submit-hint { margin: 0; }
+/* Boutons Soumettre / Sauvegardes : clic = pop-up centrée (pas de flèche) */
+.action-btn {
+  cursor: pointer; user-select: none; flex-shrink: 0;
+  font-family: "Geologica", "Inter", sans-serif; font-weight: 700; font-size: 1.05rem;
+  padding: 12px 18px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: #7A8A77; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.action-btn-block { width: 100%; } /* Soumettre en haut de la colonne de droite — l'espacement est porté par le gap flex de .side-col (pas de marge, sinon doublon) */
+.action-btn:hover { filter: brightness(1.06); }
+.action-btn:active { filter: brightness(0.96); }
+/* Pop-up centrée (Soumettre / Sauvegardes) */
+.modal-overlay.center { justify-content: center; align-items: center; padding: 10px; }
+/* Bande grisée du chiffrage : prix HT avant promotion, code promotion, montant de la
+   réduction — trait fin de séparation avant le coût estimatif */
+.promo-band {
+  display: flex; flex-direction: column; gap: 4px;
+  border-bottom: 1px solid var(--border); /* trait fin, comme entre TVA et Coût TTC */
+  margin-bottom: 6px; padding-bottom: 8px;
+}
+.promo-band label { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+.promo-band input {
+  max-width: 180px; padding: 6px 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 0.85rem; text-transform: uppercase; background: #fff; color: var(--text);
+}
+.promo-band .promo-reduction .v { color: var(--accent); font-weight: 700; }
+/* Réglages généraux : au survol, un choix grisé repasse en normal */
+.reglages-wrap .choix-row:hover { opacity: 1; }
+/* Sous-titres des rubriques de « Réglages généraux » : +20 %, noir */
+.reglages-wrap .rubrique .section-label { font-size: calc(0.78rem * 1.2); color: #000; }
 .rubrique { margin-bottom: 6px; }
 .choix-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
 .choix-row {

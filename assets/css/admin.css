@@ -607,3 +607,167 @@
   border-radius: var(--border-radius);
   font-size: 0.85rem;
 }
+
+/* Zone modifiable de la fiche client (fond gris, champs empilés) */
+.admin-edit-zone {
+  background: #f5f5f4;
+  border: 1px solid var(--gray-border);
+  border-radius: var(--border-radius);
+  padding: 18px;
+  margin-top: 14px;
+}
+.modal-row.stack {
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Tableau de bord : titre de carte = lien cliquable, compteur à côté du titre,
+   description affichée uniquement au survol du titre */
+.admin-dash-link {
+  color: inherit;
+  text-decoration: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.admin-dash-link:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.admin-dash-count {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+.admin-dash-head {
+  position: relative;
+}
+.admin-dash-head h2 {
+  margin-bottom: 0;
+}
+/* Petite pop-up sous le titre, au survol du lien (comme une info-bulle de lien) */
+.admin-dash-desc {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  max-width: 260px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: var(--white);
+  border: 1px solid var(--gray-border);
+  border-radius: var(--border-radius);
+  box-shadow: var(--box-shadow);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--gray);
+}
+.admin-dash-head h2:hover + .admin-dash-desc,
+.admin-dash-desc:hover {
+  display: block;
+}
+.admin-grid .admin-card {
+  margin-bottom: 0;
+}
+
+/* ----- Statistiques d'utilisation (tableau de bord) ----- */
+.stats-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.stats-kpi {
+  flex: 1 1 140px;
+  background: var(--gray-light, #f5f5f4);
+  border: 1px solid var(--gray-border);
+  border-radius: var(--border-radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stats-kpi-v {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+.stats-kpi-k {
+  font-size: 0.75rem;
+  color: var(--gray);
+}
+.stats-grid {
+  margin-top: 0;
+}
+.stats-grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+.stats-mini {
+  margin-bottom: 0;
+  padding: var(--spacing-lg);
+}
+.stats-mini h3 {
+  font-size: 0.95rem;
+  margin: 0 0 8px;
+}
+.stats-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.stats-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stats-bar-label {
+  flex: 0 0 180px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stats-bar-track {
+  flex: 1;
+  background: var(--gray-light, #f5f5f4);
+  border-radius: 4px;
+  height: 14px;
+  overflow: hidden;
+}
+.stats-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  border-radius: 4px;
+}
+.stats-bar-val {
+  flex: 0 0 32px;
+  text-align: right;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.stats-heatmap {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.65rem;
+}
+.stats-heatmap th {
+  font-weight: 600;
+  padding: 2px 3px;
+  color: var(--gray);
+  text-align: center;
+}
+.stats-heatmap td {
+  border: 1px solid #fff;
+  min-width: 18px;
+  height: 16px;
+  text-align: center;
+  color: #1c1917;
+  padding: 0;
+}
+.stats-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}

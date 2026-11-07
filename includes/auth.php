@@ -9,6 +9,7 @@
 
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/users.php';
+require_once __DIR__ . '/stats.php'; // log d'événements de connexion (métriques)
 
 // Cookie de session renforcé : inaccessible en JavaScript, envoyé uniquement sur ce site (SameSite=Lax)
 session_set_cookie_params([
@@ -31,6 +32,9 @@ function archicad_login(string $email, string $password): bool
         // Nouvel identifiant de session à la connexion (protection contre la fixation de session)
         session_regenerate_id(true);
         $_SESSION['archicad_user_id'] = (string) $user['id'];
+        // Métriques : date de dernière connexion + ouverture de session + log événement (heatmap)
+        archicad_touch_login((string) $user['id']);
+        archicad_stats_log_login((string) $user['id']);
         return true;
     }
     return false;
@@ -48,12 +52,35 @@ function archicad_current_user(): ?array
 
 function archicad_logout(): void
 {
+    // Métrique : clôture de la session (durée cumulée) avant de détruire la session
+    $uid = (string) ($_SESSION['archicad_user_id'] ?? '');
+    if ($uid !== '') {
+        archicad_touch_logout($uid);
+    }
     $_SESSION = [];
     if (ini_get('session.use_cookies')) {
         $params = session_get_cookie_params();
         setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
     }
     session_destroy();
+}
+
+// ============================================
+// Protection CSRF des formulaires de l'espace client (compte.php)
+// ============================================
+
+function archicad_csrf_token(): string
+{
+    if (empty($_SESSION['archicad_user_csrf'])) {
+        $_SESSION['archicad_user_csrf'] = bin2hex(random_bytes(32));
+    }
+    return (string) $_SESSION['archicad_user_csrf'];
+}
+
+function archicad_csrf_verify(?string $token): bool
+{
+    return $token !== null && !empty($_SESSION['archicad_user_csrf'])
+        && hash_equals((string) $_SESSION['archicad_user_csrf'], $token);
 }
 
 // ============================================
