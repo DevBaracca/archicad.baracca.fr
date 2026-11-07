@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /* =================================================================
    Catalogues par défaut — repli si l'API du site est indisponible.
@@ -1673,6 +1674,25 @@ export default function App() {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
+  // Pop-ups Soumettre / Sauvegardes : ouvertes en position fixe 20 px sous le bouton cliqué
+  // (portal body -> toujours visibles en haut de la fenêtre), puis déplaçables par la barre
+  // de titre (comme les pop-ups murs)
+  const [soumPos, setSoumPos] = useState(null); // {x,y} position fixe de la pop-up
+  const [sauvPos, setSauvPos] = useState(null);
+  const startCenterDrag = (setPos) => (e) => {
+    if (e.button !== 0 || e.target.closest("button")) return;
+    e.preventDefault();
+    const card = e.currentTarget.closest(".card");
+    const r = card.getBoundingClientRect();
+    const start = { cx: e.clientX, cy: e.clientY, x: r.left, y: r.top, w: r.width };
+    const move = (ev) => setPos({
+      x: Math.max(8, Math.min(start.x + ev.clientX - start.cx, (window.innerWidth || 1200) - start.w)),
+      y: Math.max(8, Math.min(start.y + ev.clientY - start.cy, (window.innerHeight || 800) - 80)),
+    });
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
   // pop-ups ancrées horizontalement sur l'élément cliqué du plan (centrées dessus)
   const popStyle = popPos
     ? { position: "fixed", margin: 0, left: Math.max(8, Math.min(popPos.x - 200, (window.innerWidth || 1200) - 416)), top: Math.max(8, Math.min(popPos.y - 24, (window.innerHeight || 800) - 120)) }
@@ -2182,12 +2202,12 @@ export default function App() {
           (aligné avec le bouton Soumettre en haut de la colonne de droite) */}
       <div className="submit-hint-row">
         <p className="submit-hint">Utilisez les boutons pour enregistrer ou soumettre votre projet — nous répondons dans les meilleurs délais</p>
-        <button type="button" className="action-btn" onClick={() => setSauvOpen(true)} title="Ouvrir la fenêtre Sauvegardes">Sauvegardes</button>
+        <button type="button" className="action-btn" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); const w = window.innerWidth || 1200; setSauvPos({ x: Math.max(8, Math.min((w - 400) / 2, w - 416)), y: r.bottom + 20 }); setSauvOpen(true); }} title="Ouvrir la fenêtre Sauvegardes">Sauvegardes</button>
       </div>
-      {soumettreOpen && (
+      {soumettreOpen && createPortal(
       <div className="modal-overlay center" onClick={() => setSoumettreOpen(false)}>
-        <div className="card modal" onClick={(e) => e.stopPropagation()}>
-          <div className="card-title modal-title">
+        <div className="card modal" style={{ position: "fixed", margin: 0, left: soumPos?.x ?? 8, top: soumPos?.y ?? 8 }} onClick={(e) => e.stopPropagation()}>
+          <div className="card-title modal-title" onPointerDown={startCenterDrag(setSoumPos)} style={{ cursor: "grab", touchAction: "none" }}>
             <span>Soumettre</span>
             <button type="button" className="icon-btn danger" onClick={() => setSoumettreOpen(false)} title="Fermer" aria-label="Fermer">
               <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
@@ -2210,11 +2230,11 @@ export default function App() {
           </div>
         </div>
       </div>
-      )}
-      {sauvOpen && (
+      , document.body)}
+      {sauvOpen && createPortal(
       <div className="modal-overlay center" onClick={() => setSauvOpen(false)}>
-        <div className="card modal" onClick={(e) => e.stopPropagation()}>
-          <div className="card-title modal-title">
+        <div className="card modal" style={{ position: "fixed", margin: 0, left: sauvPos?.x ?? 8, top: sauvPos?.y ?? 8 }} onClick={(e) => e.stopPropagation()}>
+          <div className="card-title modal-title" onPointerDown={startCenterDrag(setSauvPos)} style={{ cursor: "grab", touchAction: "none" }}>
             <span>Sauvegardes</span>
             <button type="button" className="icon-btn danger" onClick={() => setSauvOpen(false)} title="Fermer" aria-label="Fermer">
               <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
@@ -2279,7 +2299,7 @@ export default function App() {
           </div>
         </div>
       </div>
-      )}
+      , document.body)}
       <div className="stage" ref={stageRef} style={{ height: stageH }}>
         <div className="panel" ref={(el) => { panelRefs.current.plan = el; }} style={{ left: panels.plan.x, top: panels.plan.y }}>
           <div className="panel-handle panel-fixed" title="Plan (fixé en haut à gauche)">
@@ -2361,7 +2381,7 @@ export default function App() {
       </div>
       <div className="side-col">
       {/* Bouton Soumettre en haut de la colonne de droite (niveau du plan) : clic = pop-up centrée */}
-      <button type="button" className="action-btn action-btn-block" onClick={() => setSoumettreOpen(true)} title="Ouvrir la fenêtre Soumettre">Soumettre</button>
+      <button type="button" className="action-btn action-btn-block" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); const w = window.innerWidth || 1200; setSoumPos({ x: Math.max(8, Math.min((w - 400) / 2, w - 416)), y: r.bottom + 20 }); setSoumettreOpen(true); }} title="Ouvrir la fenêtre Soumettre">Soumettre</button>
       <div className={"card panel-card" + (reglagesOpen ? " deplie" : "")}>
         <div className="card-title card-toggle" onClick={() => setReglagesOpen((o) => !o)} title={reglagesOpen ? "Replier les réglages généraux" : "Ouvrir les réglages généraux"}>
           <span className={"carac-arrow" + (reglagesOpen ? " open" : "")}></span>
