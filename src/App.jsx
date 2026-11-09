@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
+// Vue 3D (Three.js) chargée à la demande : le bundle three (~700 kB) est isolé dans un chunk séparé
+const Vue3D = React.lazy(() => import("./Vue3D.jsx"));
 import { createPortal } from "react-dom";
 
 /* =================================================================
@@ -132,7 +134,7 @@ const DEFAULTS = {
 const instOf = (d, id) => (d.instances || []).find((i) => i.id === id) || (d.instances || [])[0];
 const modelMurs = (faces) =>
   Object.fromEntries(FACES.map((f) => [f.key, { actif: (faces?.[f.key] ?? "mur") === "mur", ouvertures: [], surface: null, surfaceInt: null }]));
-const bboxOf = (d, dmOf) => {
+export const bboxOf = (d, dmOf) => {
   const insts = d.instances?.length ? d.instances : [{ x: 0, y: 0, moduleId: d.moduleId }];
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const i of insts) {
@@ -143,7 +145,7 @@ const bboxOf = (d, dmOf) => {
   return { minX, minY, maxX, maxY };
 };
 // Dimensions du modèle d'une instance (chaque module ajouté peut avoir son propre modèle)
-const dimsOf = (d, env, inst) => {
+export const dimsOf = (d, env, inst) => {
   const m = env.modules?.find((x) => x.id === (inst?.moduleId || d.moduleId)) || env.modules?.[0];
   return m
     ? { longueur: +m.longueur, largeur: +m.largeur, hauteur: +m.hauteur, faces: m.faces, nom: m.nom, id: m.id }
@@ -151,7 +153,7 @@ const dimsOf = (d, env, inst) => {
 };
 // épaisseur du mur porteur (isolation choisie) — sert de gap entre les lignes
 // directrices de deux modules adjacents (le mur commun occupe cet espace)
-const epMurOf = (d, env) => +((env.murs.find((m) => m.id === d.murType) || env.murs[0])?.epaisseur ?? 0.14);
+export const epMurOf = (d, env) => +((env.murs.find((m) => m.id === d.murType) || env.murs[0])?.epaisseur ?? 0.14);
 const spanXm = (d, env) => { const b = bboxOf(d, (i) => dimsOf(d, env, i)); return b.maxX - b.minX; }; // longueur cumulée
 const spanYm = (d, env) => { const b = bboxOf(d, (i) => dimsOf(d, env, i)); return b.maxY - b.minY; }; // largeur cumulée
 const nbInst = (d) => Math.max(1, d.instances?.length || 1);
@@ -321,19 +323,19 @@ const empriseAuSol = (d, env, murDef) =>
   (spanXm(d, env) + 2 * murDef.epaisseur) * (spanYm(d, env) + 2 * murDef.epaisseur);
 
 /* Épaisseur du plancher retenu (m), défaut 20 cm */
-const epaisseurPlancher = (d, planchers) =>
+export const epaisseurPlancher = (d, planchers) =>
   +((planchers.find((p) => p.id === d.plancher) || planchers[0])?.epaisseur ?? 0.20);
 
 /* Élément de la rubrique « Toitures » référencé par le module (repli sur la
    recherche par type géométrique pour les anciennes configurations) */
-const toitureDefOf = (d, env) =>
+export const toitureDefOf = (d, env) =>
   env.toitures.find((t) => t.id === d.toiture)
   || env.toitures.find((t) => t.type === d.toiture)
   || env.toitures[0]
   || { id: "monopente", nom: "Monopente", type: "monopente", favori: "", epaisseur: 0.30, rgb: [120, 113, 108], surface: "" };
 /* Forme de toiture choisie côté client (onglet « Formes », catalogue « formes » :
    géométrie + pentes) ; repli sur la forme référencée par l'ancien modèle */
-const formeDefOf = (d, env) => {
+export const formeDefOf = (d, env) => {
   const mod = env.modules?.find((m) => m.id === d.moduleId);
   const formeId = d.forme || mod?.forme || null;
   return formeId ? env.formes?.find((f) => f.id === formeId) || null : null;
@@ -341,12 +343,12 @@ const formeDefOf = (d, env) => {
 
 /* Géométrie de toiture effective : la forme du module prioritairement,
    sinon le type de l'élément toiture (rétro-compatibilité terrasse) */
-const toitTypeOf = (d, env) =>
+export const toitTypeOf = (d, env) =>
   d.geometrie || formeDefOf(d, env)?.geometrie || toitureDefOf(d, env).type || "monopente";
 
 /* Pente du versant 2 en degrés (deux pentes asymétriques ; = pente sinon) */
-const pente2Of = (d) => +(d.pente2 ?? d.pente ?? 15);
-const pente1Of = (d) => +(d.pente ?? 15);
+export const pente2Of = (d) => +(d.pente2 ?? d.pente ?? 15);
+export const pente1Of = (d) => +(d.pente ?? 15);
 
 /* Versions « dims » (chaque instance de module a son propre modèle, donc ses
    propres longueur/largeur/hauteur) — pentes globales (forme des réglages) */
@@ -367,7 +369,7 @@ function surfaceToitureDm(dm, p1, p2, tt) {
   return dm.longueur * (dm.largeur / c1);
 }
 
-function hauteurFaitageDm(dm, p1, p2, tt) {
+export function hauteurFaitageDm(dm, p1, p2, tt) {
   if (tt === "terrasse") return 0;
   const t1 = Math.tan((p1 * Math.PI) / 180);
   if (tt === "monopente") return t1 * dm.largeur;
@@ -405,8 +407,8 @@ const POSITION_STEP = 0.6;  // 60 cm
    murs (référence retenue dans l'export JSON) ; en élévation, la ligne
    directrice du plancher est en haut (point bas des murs) et le trait du
    sol est à 20 cm sous le bas du plancher */
-const PLANCHER_DEPASSEMENT = 0.217; // 21,7 cm de chaque côté
-const SOL_SOUS_PLANCHER = 0.20;     // 20 cm
+export const PLANCHER_DEPASSEMENT = 0.217; // 21,7 cm de chaque côté
+export const SOL_SOUS_PLANCHER = 0.20;     // 20 cm
 
 const surfaceMenuiserie = (m) =>
   (m?.ouvertures || []).reduce((s, o) => s + o.largeur * o.hauteur, 0);
@@ -871,9 +873,12 @@ function mergeConfig(saved) {
 
 /* Subdivisions cliquables d'un module sur le plan, pour sélectionner le pent
    de toiture à l'endroit du clic */
-function pentParts(d, inst, dimsOf, pents, toitType, x, y, L, l) {
+function pentParts(d, inst, dimsOf, pents, toitType, x, y, L, l, epPx = 0) {
   const dm = dimsOf(inst);
-  const cx = x + L / 2, cy = y + l / 2;
+  // Les pents couvrent aussi l'épaisseur des murs (comme la toiture réelle) :
+  // pas de jour entre les pents de deux modules accolés, y compris en jonction en L
+  const x0 = x - epPx, y0 = y - epPx, W = L + 2 * epPx, H = l + 2 * epPx;
+  const cx = x + L / 2, cy = y + l / 2; // centre = centre de la ligne directrice
   const num = (v) => pents.find((p) => p.instId === inst.id && p.versant === v)?.numero ?? "?";
   if (toitType === "deuxpentes") {
     const t1 = Math.tan((pente1Of(d) * Math.PI) / 180);
@@ -881,31 +886,31 @@ function pentParts(d, inst, dimsOf, pents, toitType, x, y, L, l) {
     const run1 = t1 > 0 ? Math.min(Math.max(hF / t1, 0), dm.largeur) : dm.largeur / 2;
     const yr = y + (run1 / dm.largeur) * l; // faitage (peut être décalé si asymétrique)
     return [
-      { versant: "nord", numero: num("nord"), points: `${x},${y} ${x + L},${y} ${x + L},${yr} ${x},${yr}` },
-      { versant: "sud", numero: num("sud"), points: `${x},${yr} ${x + L},${yr} ${x + L},${y + l} ${x},${y + l}` },
+      { versant: "nord", numero: num("nord"), points: `${x0},${y0} ${x0 + W},${y0} ${x0 + W},${yr} ${x0},${yr}` },
+      { versant: "sud", numero: num("sud"), points: `${x0},${yr} ${x0 + W},${yr} ${x0 + W},${y0 + H} ${x0},${y0 + H}` },
     ];
   }
   if (toitType === "quatrepentes") {
     return [
-      { versant: "nord", numero: num("nord"), points: `${x},${y} ${x + L},${y} ${cx},${cy}` },
-      { versant: "sud", numero: num("sud"), points: `${x},${y + l} ${x + L},${y + l} ${cx},${cy}` },
-      { versant: "ouest", numero: num("ouest"), points: `${x},${y} ${x},${y + l} ${cx},${cy}` },
-      { versant: "est", numero: num("est"), points: `${x + L},${y} ${x + L},${y + l} ${cx},${cy}` },
+      { versant: "nord", numero: num("nord"), points: `${x0},${y0} ${x0 + W},${y0} ${cx},${cy}` },
+      { versant: "sud", numero: num("sud"), points: `${x0},${y0 + H} ${x0 + W},${y0 + H} ${cx},${cy}` },
+      { versant: "ouest", numero: num("ouest"), points: `${x0},${y0} ${x0},${y0 + H} ${cx},${cy}` },
+      { versant: "est", numero: num("est"), points: `${x0 + W},${y0} ${x0 + W},${y0 + H} ${cx},${cy}` },
     ];
   }
   // monopente / terrasse : un seul versant
   const v = toitType === "terrasse" ? "toit" : "sud";
-  return [{ versant: v, numero: num(v), points: `${x},${y} ${x + L},${y} ${x + L},${y + l} ${x},${y + l}` }];
+  return [{ versant: v, numero: num(v), points: `${x0},${y0} ${x0 + W},${y0} ${x0 + W},${y0 + H} ${x0},${y0 + H}` }];
 }
 
 /* ----- Fenêtres de toit (posées sur les pents) ----- */
 // Bord « bas de pente » d'un pent sur le plan (= bord de la ligne directrice
 // du module côté gouttière) : monopente/terrasse -> sud, deux pentes et quatre
 // pentes -> le versant lui-même.
-const basPenteOf = (toitType, versant) =>
+export const basPenteOf = (toitType, versant) =>
   toitType === "deuxpentes" || toitType === "quatrepentes" ? versant : "sud";
 // Pente du versant (pour projeter le cadre de la fenêtre sur le plan)
-const penteOfPent = (d, toitType, versant) =>
+export const penteOfPent = (d, toitType, versant) =>
   toitType === "terrasse" ? 0
   : toitType === "deuxpentes" && versant === "sud" ? pente2Of(d)
   : pente1Of(d);
@@ -922,7 +927,7 @@ const fenetreToitProfondeur = (d, toitType, versant, hauteur) =>
 // Profondeur par défaut du cadre depuis la ligne directrice du bas de pente (px plan)
 const FENETRE_TOIT_DEP_PX = 20;
 // Liste des fenêtres de toit d'un pent
-const fenetresOfPent = (d, instId, versant) => d.fenetresToit?.[instId]?.[versant] || [];
+export const fenetresOfPent = (d, instId, versant) => d.fenetresToit?.[instId]?.[versant] || [];
 
 /* ----- Promotions -----
    Promotion active : le code saisi correspond à une promotion dont la période
@@ -1042,13 +1047,9 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
         <pattern id="grid100" width="50" height="50" patternUnits="userSpaceOnUse">
           <path d="M50 0 H0 V50" fill="none" stroke="#c8c0b4" strokeWidth="1" />
         </pattern>
-        <filter id="blurShP" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3" /></filter>
       </defs>
       <rect x="0" y="0" width={W} height={H} fill="url(#grid)" />
       <rect x="0" y="0" width={W} height={H} fill="url(#grid100)" />
-      {/* ombre globale sous l'ensemble des modules (relief), pas par module */}
-      <rect x={X(b.minX) + 10} y={Y(b.minY) + 12} width={(b.maxX - b.minX) * scale} height={(b.maxY - b.minY) * scale}
-        fill="rgba(28,25,23,0.28)" filter="url(#blurShP)" />
       {/* lignes directrices (intérieures) de chaque module + zone toiture cliquable */}
       {insts.map((inst) => (
         <rect key={inst.id} x={X(inst.x)} y={Y(inst.y)} width={Lof(inst)} height={lof(inst)}
@@ -1057,7 +1058,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
       {/* pents de toiture cliquables : un clic affiche le pent cliqué dans la carte */}
       {onSelectPent && insts.map((inst) => {
         const x = X(inst.x), y = Y(inst.y), L = Lof(inst), l = lof(inst);
-        return pentParts(d, inst, dimsOf, pents, toitType, x, y, L, l).map((pp) => (
+        return pentParts(d, inst, dimsOf, pents, toitType, x, y, L, l, ep).map((pp) => (
           <polygon key={pp.versant}
             points={pp.points}
             fill={planSel === "toiture" && selPent?.instId === inst.id && selPent?.versant === pp.versant ? "rgba(180,83,9,0.14)" : "transparent"}
@@ -1100,19 +1101,22 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
           const run1 = t1 > 0 ? Math.min(Math.max(hFm / t1, 0), dm.largeur) : dm.largeur / 2;
           const yRidge = Y(inst.y) + run1 * scale;
           return (
-            <line key={inst.id} x1={X(inst.x)} y1={yRidge} x2={X(inst.x) + Lof(inst)} y2={yRidge}
+            // faîtage prolongé de l'épaisseur des murs : les faîtages de deux modules
+            // accolés se rejoignent (pas de décalage à la jonction)
+            <line key={inst.id} x1={X(inst.x) - ep} y1={yRidge} x2={X(inst.x) + Lof(inst) + ep} y2={yRidge}
               stroke="#b45309" strokeWidth="2" strokeDasharray="7 5" />
           );
         }
         if (toitType === "quatrepentes") {
           const x = X(inst.x), y = Y(inst.y), L = Lof(inst), l = lof(inst);
+          const x0 = x - ep, y0 = y - ep, W = L + 2 * ep, H = l + 2 * ep; // coins extérieurs des murs
           return (
             <g key={inst.id} stroke="#b45309" strokeWidth="1.5" strokeDasharray="4 4">
-              <line x1={x + l / 2} y1={y + l / 2} x2={x + L - l / 2} y2={y + l / 2} strokeWidth="2" strokeDasharray="7 5" />
-              <line x1={x} y1={y} x2={x + l / 2} y2={y + l / 2} />
-              <line x1={x + L} y1={y} x2={x + L - l / 2} y2={y + l / 2} />
-              <line x1={x} y1={y + l} x2={x + l / 2} y2={y + l / 2} />
-              <line x1={x + L} y1={y + l} x2={x + L - l / 2} y2={y + l / 2} />
+              <line x1={x + l / 2 - ep} y1={y + l / 2} x2={x + L - l / 2 + ep} y2={y + l / 2} strokeWidth="2" strokeDasharray="7 5" />
+              <line x1={x0} y1={y0} x2={x + l / 2} y2={y + l / 2} />
+              <line x1={x0 + W} y1={y0} x2={x + L - l / 2} y2={y + l / 2} />
+              <line x1={x0} y1={y0 + H} x2={x + l / 2} y2={y + l / 2} />
+              <line x1={x0 + W} y1={y0 + H} x2={x + L - l / 2} y2={y + l / 2} />
             </g>
           );
         }
@@ -1227,7 +1231,7 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
   );
   const epPx = murDef.epaisseur * scale;
   const epPxP = epP * scale;                      // épaisseur du plancher en px
-  const epToitPx = epToit * scale * 2;            // épaisseur de la toiture en px (x2 pour la lisibilité)
+  const epToitPx = epToit * scale * 3;            // épaisseur de la toiture en px (x3 pour la lisibilité, équivalence visuelle avec la 3D amincie)
   const depPx = PLANCHER_DEPASSEMENT * scale;     // dépassement du plancher / ligne directrice des murs
   const L = Lm * scale;
   const x0 = (W - L) / 2;
@@ -1258,6 +1262,9 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
     const fillToit = mixHex(rgbHex(toitRgb), "#ffffff", 0.55); // bande pleine opaque (teintée couleur toiture), la grille ne transparaît pas
     if (toitType === "terrasse") return { path: `M ${xaS} ${yTop} L ${xbS} ${yTop} L ${xbS} ${yTop - epToitPx} L ${xaS} ${yTop - epToitPx} Z`, fill: fillToit, dash: null, cote: false };
     if (toitType === "monopente") {
+      // façade nord = pignon haut : le mur monte jusqu'au toit, la toiture n'est
+      // vue que de chant (trait du haut) ; façade sud = versant vu de face (bande)
+      if (horiz && faceKey === "nord") return { path: `M ${xaS} ${yTop - hF} L ${xbS} ${yTop - hF}`, fill: "none", dash: null, cote: false };
       if (horiz) return { path: `M ${xaS} ${yTop} L ${xaS} ${yTop - hF} L ${xbS} ${yTop - hF} L ${xbS} ${yTop} Z`, fill: fillToit, dash: null, cote: true };
       // est/ouest : le mur monte aussi jusqu'au toit (pignon monopente) ; le toit
       // dépasse en suivant la ligne de la pente (prolongé de epToitPx à chaque bout,
@@ -1304,6 +1311,10 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
     let debG = !segs.some((o) => o !== s && memeProf(o) && Math.abs(posOf(o) + lenOf(o) + epM - pos) < eps);
     let debD = !segs.some((o) => o !== s && memeProf(o) && Math.abs(pos + lenM + epM - posOf(o)) < eps);
     if (miroir) { const t = debG; debG = debD; debD = t; } // en nord/est, l'axe est inversé
+    // En monopente, le nord est le haut du toit (le mur nord monte jusqu'au toit) :
+    // on ne supprime JAMAIS le débord au nord, même sur un côté commun.
+    // En vue est/ouest, l'extrémité nord de la pente est debG (ouest) / debD (est).
+    if (toitType === "monopente" && !horiz) { if (faceKey === "ouest") debG = true; else debD = true; }
     return { ...s, x0s, Ls, hM, hF, yTop: yPlancher - hM, toit: toitOf(x0s, Ls, yPlancher - hM, hF, s.dm, debG, debD) };
   });
   placed.sort((a, c) => (c.depth ?? 0) - (a.depth ?? 0)); // dessin du fond vers l'avant
@@ -1319,6 +1330,8 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
   // profondeur relative (0 = le plus proche de la face) pour griser les segments au fond
   const maxDepth = Math.max(0, ...placed.map((s) => s.depth ?? 0));
   const ox = (o, seg) => seg.x0s + (miroir ? seg.Ls - (o.position + o.largeur) * scale : o.position * scale);
+  // En monopente, la façade nord est le pignon haut : le mur monte jusqu'au toit
+  const murTopOf = (seg) => (toitType === "monopente" && faceKey === "nord" ? seg.yTop - seg.hF : seg.yTop);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ width: "100%", height: "100%" }}>
       <defs>
@@ -1329,7 +1342,6 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
         <pattern id="gridE100" width="50" height="50" patternUnits="userSpaceOnUse">
           <path d="M50 0 H0 V50" fill="none" stroke="#c8c0b4" strokeWidth="1" />
         </pattern>
-        <filter id="blurShE" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3" /></filter>
       </defs>
       <rect x="0" y="0" width={W} height={H} fill="url(#gridE)" />
       <rect x="0" y="0" width={W} height={H} fill="url(#gridE100)" />
@@ -1343,8 +1355,8 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
         {placed.map((seg, i) => {
           const sd = surfaceOf(seg.face);
           return sd?.image ? (
-            <pattern key={i} id={`murSurf-${i}`} patternUnits="userSpaceOnUse" x={seg.x0s - epPx} y={seg.yTop} width={seg.Ls + 2 * epPx} height={seg.hM}>
-              <image href={sd.image} x={seg.x0s - epPx} y={seg.yTop} width={seg.Ls + 2 * epPx} height={seg.hM} preserveAspectRatio="xMidYMid slice" />
+            <pattern key={i} id={`murSurf-${i}`} patternUnits="userSpaceOnUse" x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)}>
+              <image href={sd.image} x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)} preserveAspectRatio="xMidYMid slice" />
             </pattern>
           ) : null;
         })}
@@ -1363,14 +1375,14 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
                 d={`M ${seg.x0s - epPx} ${yPlancher} L ${seg.x0s - epPx} ${seg.yTop} L ${seg.toit.apexX} ${seg.yTop - seg.hF} L ${seg.x0s + seg.Ls + epPx} ${seg.yTop} L ${seg.x0s + seg.Ls + epPx} ${yPlancher} Z`}
                 fill={sd?.image ? `url(#murSurf-${i})` : mixHex(rgbHex(murDef.rgb), "#ffffff", 0.6 * t)} stroke="#78716c" />
             ) : (
-            <rect x={seg.x0s - epPx} y={seg.yTop} width={seg.Ls + 2 * epPx} height={seg.hM}
+            <rect x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)}
               fill={sd?.image ? `url(#murSurf-${i})` : mixHex(rgbHex(murDef.rgb), "#ffffff", 0.6 * t)} stroke="#78716c" />
             )}
             {sd?.image && t > 0 && (seg.toit.pignon ? (
               <path d={`M ${seg.x0s - epPx} ${yPlancher} L ${seg.x0s - epPx} ${seg.yTop} L ${seg.toit.apexX} ${seg.yTop - seg.hF} L ${seg.x0s + seg.Ls + epPx} ${seg.yTop} L ${seg.x0s + seg.Ls + epPx} ${yPlancher} Z`}
                 fill="#ffffff" opacity={0.6 * t} stroke="none" />
             ) : (
-              <rect x={seg.x0s - epPx} y={seg.yTop} width={seg.Ls + 2 * epPx} height={seg.hM}
+              <rect x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)}
                 fill="#ffffff" opacity={0.6 * t} stroke="none" />
             ))}
             <line x1={seg.x0s} y1={seg.yTop} x2={seg.x0s} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
@@ -1413,8 +1425,6 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
           </g>
         );
       })}
-      {/* ombre globale sous toute la façade (relief), pas par segment */}
-      <rect x={x0 - epPx + 8} y={yPlancher + 4} width={L + 2 * epPx} height={epPxP + 8} fill="rgba(28,25,23,0.25)" filter="url(#blurShE)" />
       <text x={x0 + L / 2} y={yPlancher - hMax * scale - hFmax * scale - 12} textAnchor="middle" fill="#78716c" fontSize="11">
         {toitType === "terrasse"
           ? `${nom} — terrasse plate (${segs.length} module${segs.length > 1 ? "s" : ""})`
@@ -1536,6 +1546,7 @@ export default function App() {
   const [panels, setPanels] = useState({
     plan: { x: 10, y: 0, w: 5000, h: 420 },
     elev: { x: 10, y: 580, w: 5000, h: 340 },
+    vue3d: { x: 10, y: 1080, w: 5000, h: 380 },
   });
   const [zoom, setZoom] = useState(1); // zoom du plan (boutons + / −)
   const [stageH, setStageH] = useState(900);
@@ -1549,6 +1560,16 @@ export default function App() {
       if (el) max = Math.max(max, el.offsetTop + el.offsetHeight);
     });
     setStageH(Math.max(max + 8, 320));
+
+    // Vue 3D toujours fixée sous le panneau Façades : on mesure le bas réel du
+    // panneau (barre de titre + rosace = hauteur variable) pour éviter tout chevauchement
+    const elevEl = panelRefs.current.elev;
+    if (elevEl) {
+      const wantY = elevEl.offsetTop + elevEl.offsetHeight + 20;
+      setPanels((prev) => (Math.abs(prev.vue3d.y - wantY) > 2
+        ? { ...prev, vue3d: { ...prev.vue3d, x: prev.elev.x, y: wantY, w: prev.elev.w } }
+        : prev));
+    }
     const onResize = () => {
       const w2 = stageRef.current?.clientWidth ?? 0;
       if (w2) setStageW(w2);
@@ -1571,14 +1592,16 @@ export default function App() {
     const A = { ...ps.plan, x: 10, y: 0 };
     const hA = A.h + 140; // hauteur panneau ≈ canvas + barre de titre + rangée légende/rosace
     const stageW = stageRef.current?.clientWidth ?? 1100;
-    return { ...ps, plan: A, elev: clampPanel({ ...ps.elev, x: A.x, y: A.y + hA + 20, w: A.w }, stageW) };
+    const E = clampPanel({ ...ps.elev, x: A.x, y: A.y + hA + 20, w: A.w }, stageW);
+    const hE = E.h + 140; // panneau Façades : canvas + barre de titre + rangée rosace
+    return { ...ps, plan: A, elev: E, vue3d: clampPanel({ ...ps.vue3d, x: E.x, y: E.y + hE + 20, w: E.w }, stageW) };
   };
   // En dessous de 820 px, les panneaux sont empilés en pleine largeur : pas de drag/resize
   const isMobileLayout = () => window.innerWidth <= 820;
   // Déplacement d'un panneau par sa barre de titre (pointer events globaux)
   const startDrag = (e, key) => {
     if (e.button !== 0 || isMobileLayout()) return;
-    if (key === "plan" || key === "elev") return; // Plan et Façades sont fixés
+    if (key === "plan" || key === "elev" || key === "vue3d") return; // Plan, Façades et Vue 3D sont fixés
     e.preventDefault();
     const stageW = stageRef.current?.clientWidth ?? 1100;
     const start = { cx: e.clientX, cy: e.clientY, x: panels[key].x, y: panels[key].y };
@@ -1586,7 +1609,7 @@ export default function App() {
       if (!dragMovedRef.current && Math.hypot(ev.clientX - start.cx, ev.clientY - start.cy) > 5) dragMovedRef.current = true;
       setPanels((prev) => {
         const next = { ...prev, [key]: clampPanel({ ...prev[key], x: start.x + ev.clientX - start.cx, y: start.y + ev.clientY - start.cy }, stageW) };
-        return (key === "plan" || key === "elev") ? resolveOverlap(next) : next;
+        return (key === "plan" || key === "elev" || key === "vue3d") ? resolveOverlap(next) : next;
       });
     };
     const up = () => {
@@ -1611,7 +1634,7 @@ export default function App() {
           { ...prev[key], w: withW ? start.w + ev.clientX - start.cx : prev[key].w, ...(withH ? { h: start.h + ev.clientY - start.cy } : {}) },
           stageW
         ) };
-        return (key === "plan" || key === "elev") ? resolveOverlap(next) : next;
+        return (key === "plan" || key === "elev" || key === "vue3d") ? resolveOverlap(next) : next;
       });
     };
     const up = () => {
@@ -2406,6 +2429,21 @@ export default function App() {
             <Elevation d={d} murs={env.murs} planchers={env.planchers} surfaces={env.facades} toiture={toitureDef} toitType={toitType} faceKey={selectedFace} faceData={face} dims={dmSel} insts={elevInsts.list} bbox={elevInsts.b} depM={depToitM} w={effW("elev")} h={panels.elev.h} />
           </div>
           <div className="panel-resize" onPointerDown={(e) => startResize(e, "elev", true, false)} title="Agrandir/réduire en hauteur (zoom)" />
+        </div>
+        <div className="panel" ref={(el) => { panelRefs.current.vue3d = el; }} style={{ left: panels.vue3d.x, top: panels.vue3d.y }}>
+          <div className="panel-handle panel-fixed" title="Vue 3D (fixée sous les Façades)">
+            <span className="panel-title">Vue 3D</span>
+          </div>
+          <div className="panel-sub panel-sub-col" style={{ marginBottom: 10, alignItems: "flex-start" }}>
+            <span className="panel-hint big">lecture seule</span>
+            <span className="panel-hint">glisser = orbite, molette = zoom, clic droit = panoramique</span>
+          </div>
+          <div className="panel-canvas" style={{ height: panels.vue3d.h }}>
+            <Suspense fallback={<p className="panel-hint" style={{ padding: 12 }}>Chargement de la vue 3D…</p>}>
+              <Vue3D d={d} env={env} w={effW("vue3d")} h={panels.vue3d.h} />
+            </Suspense>
+          </div>
+          <div className="panel-resize" onPointerDown={(e) => startResize(e, "vue3d", true, false)} title="Agrandir/réduire en hauteur (zoom)" />
         </div>
       </div>
       </div>
