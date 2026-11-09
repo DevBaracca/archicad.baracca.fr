@@ -148,9 +148,17 @@ export const bboxOf = (d, dmOf) => {
 export const dimsOf = (d, env, inst) => {
   const m = env.modules?.find((x) => x.id === (inst?.moduleId || d.moduleId)) || env.modules?.[0];
   return m
-    ? { longueur: +m.longueur, largeur: +m.largeur, hauteur: +m.hauteur, faces: m.faces, nom: m.nom, id: m.id }
-    : { longueur: d.longueur, largeur: d.largeur, hauteur: d.hauteur, faces: null, nom: null, id: d.moduleId };
+    ? { longueur: +m.longueur, largeur: +m.largeur, hauteur: +m.hauteur, faces: m.faces, nom: m.nom, id: m.id, visibilite: m.visibilite }
+    : { longueur: d.longueur, largeur: d.largeur, hauteur: d.hauteur, faces: null, nom: null, id: d.moduleId, visibilite: null };
 };
+// visibilité des constituants d'un module (cases du back-office « Modules ») : tout visible par défaut
+const visOfInst = (d, env, inst) => dimsOf(d, env, inst).visibilite || { murs: true, complexe_toiture: true, plancher: true, couverture: true };
+// visibilité d'un pent via son instance propriétaire
+const pentVisOf = (d, env, p) => visOfInst(d, env, (d.instances || []).find((i) => i.id === p.instId) || { moduleId: d.moduleId });
+// arête (mur) visible si l'un des DEUX modules du côté commun a ses murs visibles :
+// un module « plancher seul » juxtaposé à un module avec murs laisse le mur commun au voisin
+const edgeMursVisible = (d, env, e) =>
+  visOfInst(d, env, e.inst).murs || (e.nb ? visOfInst(d, env, e.nb).murs : false);
 // épaisseur du mur porteur (isolation choisie) — sert de gap entre les lignes
 // directrices de deux modules adjacents (le mur commun occupe cet espace)
 export const epMurOf = (d, env) => +((env.murs.find((m) => m.id === d.murType) || env.murs[0])?.epaisseur ?? 0.14);
@@ -168,11 +176,11 @@ const versantsOf = (toitType) =>
 /* ----- Revêtements : catalogues « Toiture » (couvertures) et « Intérieur » -----
    couvListOf : repli rétro-compat — si le catalogue couvertures est absent
    (vieille API), on retombe sur les surfaces (extérieur), comme avant. */
-const couvListOf = (env) => (env.couvertures?.length ? env.couvertures : env.facades);
-const intListOf = (env) => env.interieurs || [];
+export const couvListOf = (env) => (env.couvertures?.length ? env.couvertures : env.facades);
+export const intListOf = (env) => env.interieurs || [];
 // id de couverture effectif d'un pent : valeur enregistrée si elle existe dans
 // le catalogue, sinon le défaut (champ surface de la toiture), sinon le 1er
-const couvIdOf = (env, id, fallback) => {
+export const couvIdOf = (env, id, fallback) => {
   const l = couvListOf(env);
   if (id && l.some((c) => c.id === id)) return id;
   if (fallback && l.some((c) => c.id === fallback)) return fallback;
@@ -180,7 +188,7 @@ const couvIdOf = (env, id, fallback) => {
 };
 // id de revêtement intérieur effectif : valeur enregistrée si valide, sinon le
 // premier du catalogue « Intérieur » ("" si le catalogue est vide)
-const intIdOf = (env, id) => {
+export const intIdOf = (env, id) => {
   const l = intListOf(env);
   if (!l.length) return "";
   if (id && l.some((c) => c.id === id)) return id;
@@ -223,9 +231,15 @@ function pentsOf(d, env) {
   // eachEdge a besoin de l'épaisseur du MUR (pas de la toiture) pour reconnaître les voisins collés
   const epMur = epMurOf(d, env);
   const edges = eachEdge(d, (i) => dimsOf(d, env, i), epMur);
-  const commun = (instId, face) => edges.some((e) => e.inst.id === instId && e.face === face && !!e.edge);
+  // côté commun avec un voisin QUI A un complexe de toiture (un module sans toit
+  // ne supprime pas le débord) ; le module lui-même a forcément un toit (pentsOf l'ignore sinon)
+  const commun = (instId, face) => edges.some((e) => e.inst.id === instId && e.face === face && !!e.edge
+    && visOfInst(d, env, e.inst).complexe_toiture);
   insts.forEach((inst, idx) => {
     const dm = dimsOf(d, env, inst);
+    // visibilité du complexe de toiture (back-office « Modules ») : si décoché,
+    // les pents de ce module ne sont PAS créés (pas de plan, pas de chiffrage, pas d'export)
+    if (!visOfInst(d, env, inst).complexe_toiture) return;
     // rectangle intérieur (sous-face) : ligne directrice - 2 épaisseurs de mur
     const dmInt = { ...dm, longueur: Math.max(0.01, dm.longueur - 2 * epMur), largeur: Math.max(0.01, dm.largeur - 2 * epMur) };
     const nbPigExt = (commun(inst.id, "est") ? 0 : 1) + (commun(inst.id, "ouest") ? 0 : 1); // pignons extérieurs
@@ -249,7 +263,8 @@ function pentsOf(d, env) {
       out.push({
         numero: n, instId: inst.id, instIndex: idx + 1, versant: v, area, areaBase,
         areaBaseInt: toitAreaInt(dmInt, pente1Of(d), pente2Of(d), toitType, v, keys.length), // sous-face intérieure : - 2 épaisseurs de mur
-        surfaceId: couvIdOf(env, d.surfacesToiture?.[inst.id]?.[v], toiture?.surface), // revêtement de toiture (catalogue « Toiture »)
+        // couverture masquée pour ce module -> pas de revêtement de toiture créé
+        surfaceId: visOfInst(d, env, inst).couverture ? couvIdOf(env, d.surfacesToiture?.[inst.id]?.[v], toiture?.surface) : "",
         surfaceIntId: intIdOf(env, d.surfacesIntToiture?.[inst.id]?.[v]), // revêtement intérieur (sous-face)
       });
     }
@@ -392,6 +407,21 @@ const hauteurFaitage = (d, tt) =>
 const surfaceToitureTotale = (d, env, tt) =>
   pentsOf(d, env).reduce((s, p) => s + p.area, 0);
 
+/* Volume brut d'un module = parallélépipède (L × l × H) + partie triangulaire de la
+   toiture au-dessus des murs : prisme triangulaire en monopente/deux pentes
+   (section = l × hF / 2), pyramide approchée en quatre pentes (L × l × hF / 3). */
+const volumeBrutInst = (d, env, dm) => {
+  const box = dm.longueur * dm.largeur * dm.hauteur;
+  const tt = toitTypeOf(d, env);
+  if (tt === "terrasse") return box;
+  const hF = hauteurFaitageDm(dm, pente1Of(d), pente2Of(d), tt);
+  if (tt === "quatrepentes") return box + (dm.longueur * dm.largeur * hF) / 3;
+  return box + (dm.longueur * (dm.largeur * hF)) / 2;
+};
+const volumeBrutOf = (d, env) =>
+  (d.instances?.length ? d.instances : [{ moduleId: d.moduleId }])
+    .reduce((s, i) => s + volumeBrutInst(d, env, dimsOf(d, env, i)), 0);
+
 const murLongueurDm = (dm, face) =>
   face === "nord" || face === "sud" ? dm.longueur : dm.largeur;
 const murLongueur = (d, face) => murLongueurDm({ longueur: d.longueur, largeur: d.largeur }, face);
@@ -436,13 +466,13 @@ const fmtM2 = (m2) => m2.toLocaleString("fr-FR", { minimumFractionDigits: 1, max
 
 /* Couleur d'affichage des murs en hexadécimal (#rrggbb), à partir du rgb
    stocké dans le catalogue (le choix des couleurs reste en rgb côté back-office) */
-const rgbHex = (rgb) =>
+export const rgbHex = (rgb) =>
   "#" + (Array.isArray(rgb) ? rgb : [158, 158, 158])
     .map((v) => Math.max(0, Math.min(255, Math.round(+v || 0))).toString(16).padStart(2, "0"))
     .join("");
 // mélange deux couleurs hexa (t = 0 -> c1, t = 1 -> c2) — utilisé pour griser
 // les segments profonds des élévations
-const mixHex = (c1, c2, t) => {
+export const mixHex = (c1, c2, t) => {
   const p = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
   const a = p(c1), b = p(c2);
   return "#" + a.map((v, i) => Math.round(v + (b[i] - v) * Math.max(0, Math.min(1, t))).toString(16).padStart(2, "0")).join("");
@@ -483,6 +513,7 @@ function mursChiffrage(d, env) {
   // une arête par mur (côtés communs comptés une fois, mur prioritaire sur charpente)
   eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).forEach((e) => {
     if (!e.actif) return;
+    if (!edgeMursVisible(d, env, e)) return; // murs non visibles des deux côtés : pas comptés
     const dm = dimsOf(d, env, e.inst); // dims du modèle de ce module
     const hF = hauteurFaitageDm(dm, p1, p2, toitType);
     const longueurExt = murLongueurDm(dm, e.face) + 2 * epMur; // épaisseurs aux 2 extrémités (EXTÉRIEUR)
@@ -543,22 +574,33 @@ function surfacesChiffrage(d, env) {
   const c1 = Math.cos((pente1Of(d) * Math.PI) / 180);
   const c2 = Math.cos((pente2Of(d) * Math.PI) / 180);
   const M = mursChiffrage(d, env);
-  const plancher = surfacePlancher(d, env); // cumul des surfaces entre 4 murs
-  // surface toiture : cumul de tous les pents de tous les modules
+  // plancher : cumul des surfaces des modules dont le plancher est visible
+  const insts0 = d.instances?.length ? d.instances : [{ moduleId: d.moduleId }];
+  const plancher = insts0.reduce((s, i) => {
+    if (!visOfInst(d, env, i).plancher) return s;
+    const dm = dimsOf(d, env, i);
+    return s + dm.longueur * dm.largeur;
+  }, 0);
+  // surface toiture : cumul des pents (couverture si visible, complexe si visible)
   const pents = pentsOf(d, env);
-  const toitureS = pents.reduce((s, p) => s + p.area, 0); // avec débords (couverture)
-  const toitureBase = pents.reduce((s, p) => s + (p.areaBase ?? p.area), 0); // ligne directrice, sans débords (complexe)
+  const toitureS = pents.reduce((s, p) => s + (pentVisOf(d, env, p).couverture ? p.area : 0), 0); // avec débords (couverture)
+  const toitureBase = pents.reduce((s, p) => s + (pentVisOf(d, env, p).complexe_toiture ? (p.areaBase ?? p.area) : 0), 0); // sans débords (complexe)
   const edges = eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env));
   const ouvrants = edges.reduce(
-    (n, e) => n + (e.actif ? (e.a?.ouvertures.length || 0) + (e.b?.ouvertures.length || 0) : 0),
+    (n, e) => n + (e.actif && edgeMursVisible(d, env, e) ? (e.a?.ouvertures.length || 0) + (e.b?.ouvertures.length || 0) : 0),
     0
   );
   // côtés passés en charpente (pas de mur) : comptés à l'unité
-  const charpentes = edges.reduce((n, e) => n + (e.actif ? 0 : 1), 0);
+  const charpentes = edges.reduce((n, e) => n + (!e.actif && edgeMursVisible(d, env, e) ? 1 : 0), 0);
+  // détail plancher : une ligne par module (plancher visible)
+  const plancherDetail = insts0.map((i, idx) => {
+    const dm = dimsOf(d, env, i);
+    return { key: i.id || `m${idx}`, instId: i.id, label: `Module ${idx + 1}${dm.nom ? ` — ${dm.nom}` : ""}`, area: dm.longueur * dm.largeur };
+  }).filter((p, idx) => visOfInst(d, env, insts0[idx]).plancher);
   // fenêtres de toit : nombre total posées sur les pents
   const fenetresToit = Object.values(d.fenetresToit || {}).reduce(
     (n, perInst) => n + Object.values(perInst || {}).reduce((s, list) => s + (list?.length || 0), 0), 0);
-  return { murs: M.total, mursDetail: M.detail, plancher, toiture: toitureS, toitureBase, pents, ouvrants, charpentes, fenetresToit };
+  return { murs: M.total, mursDetail: M.detail, plancher, plancherDetail, toiture: toitureS, toitureBase, pents, ouvrants, charpentes, fenetresToit };
 }
 
 function tarifTotal(d, env) {
@@ -573,6 +615,7 @@ function tarifTotal(d, env) {
   const ouvrantsDetail = [];
   eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).forEach((e) => {
     if (!e.actif) return;
+    if (!edgeMursVisible(d, env, e)) return; // murs non visibles des deux côtés
     [...(e.a?.ouvertures || []), ...(e.b?.ouvertures || [])].forEach((o, i) => {
       const m = env.menuiseries?.find((x) => x.id === o.menuiserieId);
       ouvrantsDetail.push({
@@ -590,20 +633,31 @@ function tarifTotal(d, env) {
   // complexe de toiture : structure (toiture × marge Toitures) sur areaBase = ligne
   // directrice SANS débords ; revêtement intérieur (sous-face × marge Intérieur) sur
   // areaBaseInt = rectangle intérieur (ligne directrice - 2 épaisseurs de mur), sans débords
-  const toitureAmount = (S.pents || []).reduce((s, p) => {
+  const toitureAmount = (S.pents || []).filter((p) => pentVisOf(d, env, p).complexe_toiture).reduce((s, p) => {
     const sdInt = intListOf(env).find((f) => f.id === p.surfaceIntId);
     return s + eurM2(toiture) * margeOf(env, "toitures") * (p.areaBase ?? p.area)
       + eurM2(sdInt) * margeOf(env, "interieurs") * (p.areaBaseInt ?? p.areaBase ?? p.area);
   }, 0);
   // couverture : tarif du revêtement de TOITURE choisi × marge Toiture (couvertures)
-  // × surface AVEC débords
-  const couvertureAmount = (S.pents || []).reduce((s, p) => {
+  // × surface AVEC débords — seulement si la couverture est visible pour le module
+  const couvertureAmount = (S.pents || []).filter((p) => pentVisOf(d, env, p).couverture).reduce((s, p) => {
     const sd = couvListOf(env).find((f) => f.id === p.surfaceId);
     return s + eurM2(sd) * margeOf(env, "couvertures") * p.area;
   }, 0);
-  // Charpente : coût unitaire × marge Charpentes × nb de côtés en charpente
+  // Charpente : coût unitaire × marge Charpentes × nb de côtés en charpente,
+  // avec une ligne de détail par côté charpente
   const charpenteDef = env.charpentes?.find((c) => c.id === d.charpente);
-  const charpenteAmount = (charpenteDef ? +charpenteDef.tarif || 0 : 0) * margeOf(env, "charpentes") * (S.charpentes || 0);
+  const charpenteUnit = (charpenteDef ? +charpenteDef.tarif || 0 : 0) * margeOf(env, "charpentes");
+  const charpenteDetail = [];
+  eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).forEach((e) => {
+    if (e.actif || !edgeMursVisible(d, env, e)) return;
+    charpenteDetail.push({
+      key: e.edge || `${e.inst.id}-${e.face}`,
+      label: `Mur ${e.numero}` + (e.edge ? " (partagé)" : "") + " — charpente",
+      amount: charpenteUnit,
+    });
+  });
+  const charpenteAmount = charpenteDetail.reduce((s, c) => s + c.amount, 0);
   // Autonomie : somme des coûts unitaires × marge systèmes Aut. des systèmes du pack choisi
   const autoDef = env.autonomies?.find((a) => a.id === d.autonomie);
   const systemesSel = (autoDef?.systemes || [])
@@ -618,6 +672,8 @@ function tarifTotal(d, env) {
   // Fenêtres de toit : détail par fenêtre posée (pent, modèle, dimensions, position, montant)
   const fenetresToitDetail = [];
   Object.entries(d.fenetresToit || {}).forEach(([instId, perInst]) => {
+    // fenêtres de toit non comptées si le complexe de toiture est masqué pour ce module
+    if (!visOfInst(d, env, instOf(d, instId) || { moduleId: d.moduleId }).complexe_toiture) return;
     Object.entries(perInst || {}).forEach(([versant, list]) => (list || []).forEach((f, i) => {
       const m = env.fenetresToit?.find((x) => x.id === f.fenetreId);
       const p = (S.pents || []).find((pp) => pp.instId === instId && pp.versant === versant);
@@ -641,6 +697,8 @@ function tarifTotal(d, env) {
     couverture: couvertureAmount,
     menuiseries,
     charpente: charpenteAmount,
+    charpenteDetail,
+    plancherDetail: (S.plancherDetail || []).map((p) => ({ ...p, amount: eurM2(plancher) * margeOf(env, "planchers") * p.area })),
     autonomie: autonomieAmount,
     autonomieNb: systemesSel.length,
     fenetresToit: fenetresToitAmount,
@@ -652,11 +710,15 @@ function tarifTotal(d, env) {
   t.pents = (S.pents || []).map((p) => {
     const sdCouv = couvListOf(env).find((f) => f.id === p.surfaceId);
     const sdInt = intListOf(env).find((f) => f.id === p.surfaceIntId);
+    const pv = pentVisOf(d, env, p);
     return {
       ...p,
-      amount: eurM2(sdCouv) * margeOf(env, "couvertures") * p.area, // couverture : revêtement toiture × marge, avec débords
-      amountBase: eurM2(toiture) * margeOf(env, "toitures") * (p.areaBase ?? p.area) // structure du complexe, sans débords
-        + eurM2(sdInt) * margeOf(env, "interieurs") * (p.areaBaseInt ?? p.areaBase ?? p.area), // sous-face intérieure (- 2 épaisseurs de mur)
+      // visibilité des constituants du module : couverture et/ou complexe masqués = montant à 0
+      amount: pv.couverture ? eurM2(sdCouv) * margeOf(env, "couvertures") * p.area : 0, // couverture : avec débords
+      amountBase: pv.complexe_toiture // structure du complexe + sous-face, sans débords
+        ? eurM2(toiture) * margeOf(env, "toitures") * (p.areaBase ?? p.area)
+          + eurM2(sdInt) * margeOf(env, "interieurs") * (p.areaBaseInt ?? p.areaBase ?? p.area)
+        : 0,
     };
   });
   // Promotion active (code saisi + période en cours + module affecté) : la
@@ -828,7 +890,7 @@ function buildExport(d, env) {
       empriseAuSol: +empriseAuSol(d, env, murDef).toFixed(2), // surface plancher + épaisseur des murs
       surfaceToiture: +surfaceToitureTotale(d, env, toitType).toFixed(2),
       surfaceMenuiserie: +eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).reduce((s, e) => s + surfaceMenuiserie(e.a || {}) + surfaceMenuiserie(e.b || {}), 0).toFixed(2),
-      volumeBrut: +insts.reduce((s, i) => { const dm = dimsOf(d, env, i); return s + dm.longueur * dm.largeur * dm.hauteur; }, 0).toFixed(2),
+      volumeBrut: +volumeBrutOf(d, env).toFixed(2),
       // Ajout rétro-compatible : détail des tarifs (catalogue back-office, marges appliquées)
       tarif: Object.fromEntries(
         Object.entries(tarifTotal(d, env)).filter(([k, v]) => k !== "pents" && typeof v === "number").map(([k, v]) => [k, +v.toFixed(2)])
@@ -954,7 +1016,7 @@ function promoActive(d, env) {
 /* =================================================================
    Plan SVG (vue de dessus)
 ================================================================= */
-function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf, pents, selPent, onSelectFace, onSelectPent, onAddSide, onRemoveInst, w, h, zoom }) {
+function Plan({ d, murs, charpente, toitType, selectedFace, planSel, selInst, cumul, dimsOf, pents, selPent, onSelectFace, onSelectPent, onAddSide, onRemoveInst, w, h, zoom }) {
   const W = w ?? 560, H = h ?? 400, margin = 64;
   const murDef = murs.find((m) => m.id === d.murType) || murs[0];
   // Modules placés côte à côte : positions absolues (x, y en mètres) ; chaque
@@ -984,7 +1046,12 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
   };
   // Arêtes murales via le helper partagé (côtés communs dessinés une seule fois,
   // un mur est prioritaire sur une charpente ; chaque arête est numérotée)
-  const edges = eachEdge(d, dimsOf, murDef.epaisseur).map((e) => ({ ...e, shared: !!e.edge }));
+  // visibilité des constituants (définie dans le back-office, partie « Modules »)
+  const visOf = (inst) => dimsOf(inst).visibilite || { murs: true, complexe_toiture: true, plancher: true, couverture: true };
+  const edges = eachEdge(d, dimsOf, murDef.epaisseur)
+    // mur visible si l'un des deux modules du côté commun a ses murs visibles
+    .filter((e) => visOf(e.inst).murs || (e.nb && visOf(e.nb).murs))
+    .map((e) => ({ ...e, shared: !!e.edge }));
   const edgeRect = (e) => {
     // portée exacte de l'arête (pas de dépassement aux coins : les murs
     // adjacents se raccordent sans doublon au raccord)
@@ -1020,6 +1087,30 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
   // Angles aux jonctions : on rallonge une extrémité d'une épaisseur là où aucun
   // mur perpendiculaire ne remplit le coin (coins extérieurs et jonctions en T)
   const rects = edges.map((e) => ({ e, ...edgeRect(e) }));
+  // poteaux charpente aux angles des murs : placés aux intersections des AXES de murs
+  // (ligne directrice ± ep/2) -> les angles partagés entre deux modules accolés
+  // coïncident exactement et ne sont dessinés qu'une fois
+  const postMap = new Map();
+  const charpFaces = new Map(); // `${inst.id}:${face}` -> côté extérieur (edge == null) ?
+  for (const e of edges) if (!e.actif) charpFaces.set(`${e.inst.id}:${e.face}`, !e.edge);
+  for (const inst of insts) {
+    const x0 = X(inst.x), y0 = Y(inst.y), L = Lof(inst), l = lof(inst);
+    const corners = [
+      { x: x0 - ep / 2, y: y0 - ep / 2, faces: ["nord", "ouest"] },
+      { x: x0 + L + ep / 2, y: y0 - ep / 2, faces: ["nord", "est"] },
+      { x: x0 + L + ep / 2, y: y0 + l + ep / 2, faces: ["sud", "est"] },
+      { x: x0 - ep / 2, y: y0 + l + ep / 2, faces: ["sud", "ouest"] },
+    ];
+    for (const c of corners) {
+      // outer = au moins un côté charpente adjacent est un mur EXTÉRIEUR (pas partagé)
+      const outer = c.faces.some((f) => charpFaces.get(`${inst.id}:${f}`) === true);
+      if (!c.faces.some((f) => charpFaces.has(`${inst.id}:${f}`))) continue;
+      const key = `${Math.round(c.x)}:${Math.round(c.y)}`;
+      const prev = postMap.get(key);
+      postMap.set(key, { x: c.x, y: c.y, s: Math.max(6, (charpente?.epaisseur ?? 0.20) * scale), outer: outer || !!prev?.outer });
+    }
+  }
+  const posts = [...postMap.values()];
   const intersects = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   for (const r of rects) {
     if (r.horiz) {
@@ -1037,9 +1128,6 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
   return (
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ width: W * (zoom ?? 1), height: H * (zoom ?? 1) }}>
       <defs>
-        <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse">
-          <path d="M0 6 L6 0" stroke="#c8b8a5" strokeWidth="1" />
-        </pattern>
         {/* quadrillage façon plan d'architecte */}
         <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
           <path d="M10 0 H0 V10" fill="none" stroke="#d9d3cb" strokeWidth="0.6" />
@@ -1056,7 +1144,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
           fill="#faf7f2" stroke="#57534e" strokeWidth="1" strokeDasharray="6 4" />
       ))}
       {/* pents de toiture cliquables : un clic affiche le pent cliqué dans la carte */}
-      {onSelectPent && insts.map((inst) => {
+      {onSelectPent && insts.filter((inst) => visOf(inst).complexe_toiture).map((inst) => {
         const x = X(inst.x), y = Y(inst.y), L = Lof(inst), l = lof(inst);
         return pentParts(d, inst, dimsOf, pents, toitType, x, y, L, l, ep).map((pp) => (
           <polygon key={pp.versant}
@@ -1071,7 +1159,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
       })}
       {/* fenêtres de toit : cadre en pointillé sur le pent, à 20 px du bas de
           pente ; la profondeur du cadre est projetée selon la pente (hauteur × cos) */}
-      {insts.map((inst) => {
+      {insts.filter((inst) => visOf(inst).complexe_toiture).map((inst) => {
         const x = X(inst.x), y = Y(inst.y), L = Lof(inst), l = lof(inst);
         return Object.entries(d.fenetresToit?.[inst.id] || {}).flatMap(([versant, list]) =>
           (list || []).map((f, i) => {
@@ -1093,7 +1181,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
         );
       })}
       {/* faitage de chaque module */}
-      {insts.map((inst) => {
+      {insts.filter((inst) => visOf(inst).complexe_toiture).map((inst) => {
         const dm = dimsOf(inst);
         if (toitType === "deuxpentes") {
           const t1 = Math.tan((pente1Of(d) * Math.PI) / 180);
@@ -1123,6 +1211,13 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
         return null;
       })}
       {/* murs (arêtes, avec angles aux jonctions) */}
+      {/* poteaux charpente des côtés COMMUNS entre deux modules : dessinés AVANT les
+          murs (un mur adjacent recouvre le poteau) ; les poteaux de murs extérieurs
+          charpente restent visibles, dessinés après les murs */}
+      {posts.filter((p) => !p.outer).map((pt, i) => (
+        <rect key={"bg-" + i} x={pt.x - pt.s / 2} y={pt.y - pt.s / 2} width={pt.s} height={pt.s}
+          fill={rgbHex(charpente?.rgb || [140, 107, 89])} stroke="#57534e" strokeWidth="1" pointerEvents="none" />
+      ))}
       {rects.map(({ e, ...p }, i) => {
         const isSel = selInst === e.inst.id && selectedFace === e.face && planSel !== "toiture";
         const f = FACES.find((x) => x.key === e.face);
@@ -1136,7 +1231,8 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
               strokeWidth={isSel ? 3 : e.actif ? 1 : 2}
               strokeDasharray={e.actif ? undefined : "5 4"}
             />
-            {!e.actif && <rect x={p.x} y={p.y} width={p.w} height={p.h} fill="url(#hatch)" />}
+            {/* charpente : pas de hachures en biais, juste le contour pointillé extérieur
+                (les poteaux aux angles sont dessinés une seule fois, voir bloc dédié) */}
             {e.actif && (e.a?.ouvertures || []).map((o, j) => {
               const ow = o.largeur * scale;
               const oh = Math.max(ep + 8, 14);
@@ -1185,6 +1281,11 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
           <path d={`M ${X(inst.x) + Lof(inst) - 34} ${Y(inst.y) + 26} L ${X(inst.x) + Lof(inst) - 26} ${Y(inst.y) + 34} M ${X(inst.x) + Lof(inst) - 26} ${Y(inst.y) + 26} L ${X(inst.x) + Lof(inst) - 34} ${Y(inst.y) + 34}`} stroke="#fff" strokeWidth="2" strokeLinecap="round" fill="none" />
         </g>
       ))}
+      {/* poteaux charpente des murs EXTÉRIEURS : visibles au-dessus des murs */}
+      {posts.filter((p) => p.outer).map((pt, i) => (
+        <rect key={"fg-" + i} x={pt.x - pt.s / 2} y={pt.y - pt.s / 2} width={pt.s} height={pt.s}
+          fill={rgbHex(charpente?.rgb || [140, 107, 89])} stroke="#57534e" strokeWidth="1" pointerEvents="none" />
+      ))}
       {/* cotes globales (cumul des modules), dessinées à l'intérieur du module */}
       <line x1={X(b.minX)} y1={Y(b.minY) + 12} x2={X(b.maxX)} y2={Y(b.minY) + 12} stroke="#a8a29e" strokeDasharray="4 3" />
       <text x={gx + sumColW / 2} y={Y(b.minY) + 26} textAnchor="middle" fill="#78716c" fontSize="10">{fmtCm(cumul.longueur)} cm</text>
@@ -1198,7 +1299,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
 /* =================================================================
    Élévation SVG (façade sud)
 ================================================================= */
-function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, faceData, dims, w, h, insts, bbox, depM }) {
+function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, charpente, toiture, toitType, faceKey, faceData, dims, w, h, insts, bbox, depM }) {
   const W = w ?? 560, H = h ?? 320, margin = 60;
   const horiz = faceKey === "nord" || faceKey === "sud";
   // Un segment par module : l'élévation est une vraie projection de la façade,
@@ -1231,7 +1332,10 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
   );
   const epPx = murDef.epaisseur * scale;
   const epPxP = epP * scale;                      // épaisseur du plancher en px
-  const epToitPx = epToit * scale * 3;            // épaisseur de la toiture en px (x3 pour la lisibilité, équivalence visuelle avec la 3D amincie)
+  // épaisseur de toiture en px : doublée (x6) seulement en vue de pignon (est/ouest, où on
+  // voit l'épaisseur), +30 % en plus ; en vue nord/sud (horiz) on reste à x3
+  const epToitPx = epToit * scale * (horiz ? 3 : 6 * 1.3);
+  const toitStrokePx = horiz ? 3 : 6 * 1.3;      // épaisseur du contour de toit (idem)
   const depPx = PLANCHER_DEPASSEMENT * scale;     // dépassement du plancher / ligne directrice des murs
   const L = Lm * scale;
   const x0 = (W - L) / 2;
@@ -1244,6 +1348,19 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
   const xa = x0 - epPx, xb = x0 + L + epPx;   // bords extérieurs de la façade
   const pa = x0 - depPx, pb = x0 + L + depPx; // bords du plancher (21,7 cm au-delà de la ligne directrice)
   const surfaceOf = (face) => surfaces.find((s) => s.id === (face?.surface ?? murDef.surface)) || surfaces[0];
+  // segment traversant (côté opposé vu derrière une charpente) : revêtement INTÉRIEUR
+  const sdOf = (seg) => seg.traversant
+    ? ((interieurs || []).find((x) => x.id === seg.face?.surfaceInt) || null)
+    : surfaceOf(seg.face);
+  // visuel de couverture du pent visible sur cette façade (catalogue « Toiture »)
+  const couvImgOfSeg = (seg) => {
+    if (!horiz) return ""; // vue de pignon : pas de bande de toit remplie
+    const list = couvertures?.length ? couvertures : surfaces;
+    const raw = d.surfacesToiture?.[seg.inst?.id ?? "m0"]?.[faceKey];
+    const fb = toiture?.surface;
+    const cid = raw && list.some((c) => c.id === raw) ? raw : (fb && list.some((c) => c.id === fb) ? fb : list[0]?.id);
+    return list.find((c) => c.id === cid)?.image || "";
+  };
   // prolonge un segment (x1,y1)-(x2,y2) de dG/dD px à chaque extrémité, le long de sa direction
   const prolonge = (x1, y1, x2, y2, dG, dD) => {
     const dx = x2 - x1, dy = y2 - y1;
@@ -1308,8 +1425,10 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
     // côté commun = voisin accolé À LA MÊME PROFONDEUR qui touche ; un voisin en
     // retrait (profondeur différente, ex. L au nord) ne supprime pas le débord
     const memeProf = (o) => Math.abs((o.depth ?? 0) - (s.depth ?? 0)) < eps;
-    let debG = !segs.some((o) => o !== s && memeProf(o) && Math.abs(posOf(o) + lenOf(o) + epM - pos) < eps);
-    let debD = !segs.some((o) => o !== s && memeProf(o) && Math.abs(pos + lenM + epM - posOf(o)) < eps);
+    // un voisin sans complexe de toiture (visibilité décochée) ne supprime pas le débord
+    const toitOk = (o) => o.vis?.complexe_toiture ?? true;
+    let debG = !segs.some((o) => o !== s && memeProf(o) && toitOk(o) && Math.abs(posOf(o) + lenOf(o) + epM - pos) < eps);
+    let debD = !segs.some((o) => o !== s && memeProf(o) && toitOk(o) && Math.abs(pos + lenM + epM - posOf(o)) < eps);
     if (miroir) { const t = debG; debG = debD; debD = t; } // en nord/est, l'axe est inversé
     // En monopente, le nord est le haut du toit (le mur nord monte jusqu'au toit) :
     // on ne supprime JAMAIS le débord au nord, même sur un côté commun.
@@ -1324,14 +1443,43 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
     const lenM = horiz ? s.dm.longueur : s.dm.largeur;
     const posO = (o) => (horiz ? o.inst?.x : o.inst?.y) ?? 0;
     const lenO = (o) => (horiz ? o.dm.longueur : o.dm.largeur);
-    s.toitVisible = !placed.some((o) => o !== s && (o.depth ?? 0) < (s.depth ?? 0) &&
+    // un toit n'est masqué que par un segment plus proche QUI A un complexe de toiture
+    // visible (un module "plancher seul" devant ne cache pas la toiture derrière)
+    s.toitVisible = !s.traversant && !placed.some((o) => o !== s && !o.traversant && (o.depth ?? 0) < (s.depth ?? 0) && (o.vis?.complexe_toiture ?? true) &&
       pos < posO(o) + lenO(o) && posO(o) < pos + lenM);
   });
   // profondeur relative (0 = le plus proche de la face) pour griser les segments au fond
-  const maxDepth = Math.max(0, ...placed.map((s) => s.depth ?? 0));
+  // (les segments traversants — côté opposé — sont exclus : toujours au fond, t = 1)
+  const maxDepth = Math.max(0, ...placed.filter((s) => !s.traversant).map((s) => s.depth ?? 0));
+  const minDepth = Math.min(0, ...placed.filter((s) => !s.traversant).map((s) => s.depth ?? 0)); // premier plan
   const ox = (o, seg) => seg.x0s + (miroir ? seg.Ls - (o.position + o.largeur) * scale : o.position * scale);
   // En monopente, la façade nord est le pignon haut : le mur monte jusqu'au toit
   const murTopOf = (seg) => (toitType === "monopente" && faceKey === "nord" ? seg.yTop - seg.hF : seg.yTop);
+  // poteaux charpente aux angles des segments sans mur : un seul poteau par x
+  // (dédupliqué entre segments adjacents qui partagent le même angle)
+  const charpPosts = [];
+  const postByX = new Map(); // x arrondi -> poteau (on garde le plus proche du spectateur)
+  placed.forEach((seg, si) => {
+    if (seg.face?.actif || seg.vis?.murs === false) return;
+    // poteaux aux intersections des axes de murs (± epPx/2) : angles partagés
+    // entre segments coïncident -> un seul poteau, celui du segment le plus proche
+    for (const x of [seg.x0s - epPx / 2, seg.x0s + seg.Ls + epPx / 2]) {
+      const k = Math.round(x);
+      const prev = postByX.get(k);
+      if (prev && (prev.seg.depth ?? 0) <= (seg.depth ?? 0)) continue; // le plus proche gagne
+      const post = {
+        x, seg, si, outer: !seg.shared,
+        cut: seg.toit.pignon && seg.toitVisible !== false ? `url(#toitCut-${si})` : undefined,
+      };
+      if (prev) {
+        const idx = charpPosts.indexOf(prev);
+        if (idx >= 0) charpPosts[idx] = post;
+      } else {
+        charpPosts.push(post);
+      }
+      postByX.set(k, post);
+    }
+  });
   return (
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ width: "100%", height: "100%" }}>
       <defs>
@@ -1353,38 +1501,105 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
       <line x1={pa} y1={yPlancher} x2={pb} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
       <defs>
         {placed.map((seg, i) => {
-          const sd = surfaceOf(seg.face);
-          return sd?.image ? (
-            <pattern key={i} id={`murSurf-${i}`} patternUnits="userSpaceOnUse" x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)}>
-              <image href={sd.image} x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)} preserveAspectRatio="xMidYMid slice" />
-            </pattern>
-          ) : null;
+          const sd = sdOf(seg);
+          const toitImg = couvImgOfSeg(seg);
+          return (
+            <React.Fragment key={i}>
+              {sd?.image && (
+                <clipPath id={`murClip-${i}`}>
+                  {seg.toit.pignon ? (
+                    <path d={`M ${seg.x0s - epPx} ${yPlancher} L ${seg.x0s - epPx} ${seg.yTop} L ${seg.toit.apexX} ${seg.yTop - seg.hF} L ${seg.x0s + seg.Ls + epPx} ${seg.yTop} L ${seg.x0s + seg.Ls + epPx} ${yPlancher} Z`} />
+                  ) : (
+                    <rect x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)} />
+                  )}
+                </clipPath>
+              )}
+              {toitImg && seg.toit.fill !== "none" && (
+                <clipPath id={`toitClip-${i}`}><path d={seg.toit.path} /></clipPath>
+              )}
+              {/* vue de pignon : zone SOUS le contour de toit — sert à couper les hauts
+                  de charpente (sablières, poteaux) qui dépasseraient de la ligne de toit */}
+              {seg.toit.pignon && (seg.vis?.complexe_toiture ?? true) && seg.toitVisible !== false && (
+                <clipPath id={`toitCut-${i}`}>
+                  <path d={`M ${seg.x0s - epPx} ${seg.yTop} L ${seg.toit.apexX} ${seg.yTop - seg.hF} L ${seg.x0s + seg.Ls + epPx} ${seg.yTop} L ${seg.x0s + seg.Ls + epPx} ${H} L ${seg.x0s - epPx} ${H} Z`} />
+                </clipPath>
+              )}
+            </React.Fragment>
+          );
         })}
       </defs>
+      {/* murs traversants (côté opposé, vus derrière une charpente) : au fond, bien grisés,
+          avec le revêtement intérieur — dessinés AVANT les poteaux charpente pour ne pas
+          les masquer quand deux charpentes sont l'une derrière l'autre */}
       {placed.map((seg, i) => {
-        const sd = surfaceOf(seg.face);
-        const t = maxDepth ? (seg.depth ?? 0) / maxDepth : 0; // 0 = devant, 1 = fond
+        if (!seg.traversant) return null;
+        const sd = sdOf(seg);
+        const fill = mixHex(rgbHex(murDef.rgb), "#ffffff", 0.85); // bien grisé (fond)
         return (
-          <g key={seg.inst?.id || i}>
+          <g key={"trav-" + (seg.inst?.id || i)}>
+            {seg.toit.pignon ? (
+              <path d={`M ${seg.x0s - epPx} ${yPlancher} L ${seg.x0s - epPx} ${seg.yTop} L ${seg.toit.apexX} ${seg.yTop - seg.hF} L ${seg.x0s + seg.Ls + epPx} ${seg.yTop} L ${seg.x0s + seg.Ls + epPx} ${yPlancher} Z`}
+                fill={fill} stroke="#78716c" />
+            ) : (
+              <rect x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)}
+                fill={fill} stroke="#78716c" />
+            )}
+            {sd?.image && (
+              <image href={sd.image} xlinkHref={sd.image} x={seg.x0s - epPx}
+                y={seg.toit.pignon ? seg.yTop - seg.hF : murTopOf(seg)}
+                width={seg.Ls + 2 * epPx} height={yPlancher - (seg.toit.pignon ? seg.yTop - seg.hF : murTopOf(seg))}
+                preserveAspectRatio="xMidYMid slice" clipPath={`url(#murClip-${i})`} opacity="0.55" />
+            )}
+          </g>
+        );
+      })}
+      {/* poteaux charpente EN ARRIÈRE-PLAN (grisés) : derrière les murs, qu'ils ne traversent pas */}
+      {charpPosts.filter((p) => (p.seg.depth ?? 0) > minDepth + 1e-6).map((p, i) => {
+        const epC = Math.max(4, (charpente?.epaisseur ?? 0.20) * scale);
+        const t = maxDepth ? (p.seg.depth ?? 0) / maxDepth : 0;
+        return (
+          <rect key={"bg-" + i} x={p.x - epC / 2} y={p.seg.yTop} width={epC} height={yPlancher - p.seg.yTop}
+            fill={mixHex(rgbHex(charpente?.rgb || [140, 107, 89]), "#ffffff", 0.6 * t)} stroke="#57534e" strokeWidth="1" pointerEvents="none" clipPath={p.cut} />
+        );
+      })}
+      {placed.map((seg, i) => {
+        if (seg.traversant) return null; // déjà rendu au fond ci-dessus
+        const sd = sdOf(seg);
+        const t = maxDepth ? (seg.depth ?? 0) / maxDepth : 0; // 0 = devant, 1 = fond
+        const vis = seg.vis || { murs: true, complexe_toiture: true, plancher: true, couverture: true };
+        return (
+          // clé unique : le segment traversant (côté opposé) partage l'id du module -> préfixe
+          <g key={(seg.traversant ? "trav-" : "") + (seg.inst?.id || i)}>
             {/* mur du segment (ligne directrice intérieure, épaisseur vers l'extérieur), opaque :
                 la grille de fond ne doit pas transparaître ; la profondeur se fait par un
                 mélange vers le blanc (ou un voile blanc sur les murs texturés) */}
-            {seg.toit.pignon ? (
-              /* vue de pignon : le mur monte jusqu'au faitage de la toiture */
+            {vis.murs && seg.face?.actif !== false && (seg.toit.pignon ? (
+              /* vue de pignon : le mur monte jusqu'au faitage de la toiture
+                  (pas de triangle plein si le côté est en charpente) */
               <path
                 d={`M ${seg.x0s - epPx} ${yPlancher} L ${seg.x0s - epPx} ${seg.yTop} L ${seg.toit.apexX} ${seg.yTop - seg.hF} L ${seg.x0s + seg.Ls + epPx} ${seg.yTop} L ${seg.x0s + seg.Ls + epPx} ${yPlancher} Z`}
-                fill={sd?.image ? `url(#murSurf-${i})` : mixHex(rgbHex(murDef.rgb), "#ffffff", 0.6 * t)} stroke="#78716c" />
+                fill={mixHex(rgbHex(murDef.rgb), "#ffffff", 0.6 * t)} stroke="#78716c" />
             ) : (
             <rect x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)}
-              fill={sd?.image ? `url(#murSurf-${i})` : mixHex(rgbHex(murDef.rgb), "#ffffff", 0.6 * t)} stroke="#78716c" />
+              fill={mixHex(rgbHex(murDef.rgb), "#ffffff", 0.6 * t)} stroke="#78716c" />
+            ))}
+            {/* visuel du revêtement (catalogue « Extérieur ») par-dessus la couleur, y compris
+                sur le triangle du pignon ; si l'image ne charge pas, la couleur reste visible */}
+            {vis.murs && seg.face?.actif !== false && sd?.image && (
+              <image href={sd.image} xlinkHref={sd.image} x={seg.x0s - epPx}
+                y={seg.toit.pignon ? seg.yTop - seg.hF : murTopOf(seg)}
+                width={seg.Ls + 2 * epPx} height={yPlancher - (seg.toit.pignon ? seg.yTop - seg.hF : murTopOf(seg))}
+                preserveAspectRatio="xMidYMid slice" clipPath={`url(#murClip-${i})`} />
             )}
-            {sd?.image && t > 0 && (seg.toit.pignon ? (
+            {vis.murs && seg.face?.actif !== false && sd?.image && t > 0 && (seg.toit.pignon ? (
               <path d={`M ${seg.x0s - epPx} ${yPlancher} L ${seg.x0s - epPx} ${seg.yTop} L ${seg.toit.apexX} ${seg.yTop - seg.hF} L ${seg.x0s + seg.Ls + epPx} ${seg.yTop} L ${seg.x0s + seg.Ls + epPx} ${yPlancher} Z`}
                 fill="#ffffff" opacity={0.6 * t} stroke="none" />
             ) : (
               <rect x={seg.x0s - epPx} y={murTopOf(seg)} width={seg.Ls + 2 * epPx} height={yPlancher - murTopOf(seg)}
                 fill="#ffffff" opacity={0.6 * t} stroke="none" />
             ))}
+            {vis.murs && (
+              <>
             <line x1={seg.x0s} y1={seg.yTop} x2={seg.x0s} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
             <line x1={seg.x0s + seg.Ls} y1={seg.yTop} x2={seg.x0s + seg.Ls} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
             {seg.face?.actif && seg.face.ouvertures.map((o, j) => (
@@ -1392,13 +1607,55 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
                 width={o.largeur * scale} height={o.hauteur * scale}
                 fill={o.type === "porte" ? "#7c2d12" : "#0284c7"} rx="2" />
             ))}
-            {/* toiture du segment — un seul pan visible par zone de chevauchement
-                (le plus proche de la face recouvre les autres) */}
-            {seg.toitVisible !== false && (
-              <path d={seg.toit.path} stroke={mixHex(rgbHex(toitRgb), "#ffffff", 0.6 * t)} strokeWidth="3" fill={seg.toit.fill} strokeLinejoin="round" strokeLinecap="butt" />
+              </>
             )}
-            {/* fenêtres de toit du versant correspondant à cette façade (pent -> face) */}
-            {seg.toitVisible !== false && (() => {
+            {/* la toiture est rendue dans une seconde passe, au-dessus des charpentes */}
+            {vis.murs && !seg.face?.actif && (() => {
+              // charpente : sablière horizontale en sous-face de toiture (aussi en
+              // vue est/ouest) ; en pignon elle est coupée par la ligne de toit
+              const epC = Math.max(4, (charpente?.epaisseur ?? 0.20) * scale);
+              const col = mixHex(rgbHex(charpente?.rgb || [140, 107, 89]), "#ffffff", 0.6 * t); // grisé selon la profondeur, comme les murs
+              const cut = seg.toit.pignon && seg.toitVisible !== false ? `url(#toitCut-${i})` : undefined;
+              return (
+                <g clipPath={cut}>
+                  <rect x={seg.x0s - epPx} y={seg.yTop - epC} width={seg.Ls + 2 * epPx} height={epC}
+                    fill={col} stroke="#57534e" strokeWidth="1" />
+                  <text x={seg.x0s + seg.Ls / 2} y={seg.yTop + seg.hM / 2} textAnchor="middle" fill="#a8a29e" fontSize="11">Charpente (pas de mur)</text>
+                </g>
+              );
+            })()}
+
+          </g>
+        );
+      })}
+      {/* poteaux charpente AU PREMIER PLAN : non grisés, au-dessus des murs */}
+      {charpPosts.filter((p) => (p.seg.depth ?? 0) <= minDepth + 1e-6).map((p, i) => {
+        const epC = Math.max(4, (charpente?.epaisseur ?? 0.20) * scale);
+        return (
+          <rect key={"fg-" + i} x={p.x - epC / 2} y={p.seg.yTop} width={epC} height={yPlancher - p.seg.yTop}
+            fill={rgbHex(charpente?.rgb || [140, 107, 89])} stroke="#57534e" strokeWidth="1" pointerEvents="none" clipPath={p.cut} />
+        );
+      })}
+      {/* toitures rendues en DERNIER : le toit prend le dessus sur les charpentes
+          (sablières/poteaux) et les murs des segments devant */}
+      {placed.map((seg, i) => {
+        const t = maxDepth ? (seg.depth ?? 0) / maxDepth : 0;
+        const vis = seg.vis || { murs: true, complexe_toiture: true, plancher: true, couverture: true };
+        if (!vis.complexe_toiture || seg.toitVisible === false) return null;
+        return (
+          <g key={(seg.traversant ? "trav-" : "") + (seg.inst?.id || i)}>
+            <path d={seg.toit.path} stroke={mixHex(rgbHex(toitRgb), "#ffffff", 0.6 * t)} strokeWidth={toitStrokePx} fill={seg.toit.fill} strokeLinejoin="round" strokeLinecap="butt" />
+            {vis.couverture && (() => {
+              const im = couvImgOfSeg(seg);
+              if (!im || seg.toit.fill === "none") return null;
+              const iy = seg.yTop - seg.hF - epToitPx - 6;
+              return (
+                <image href={im} xlinkHref={im} x={seg.x0s - epPx - depPx} y={iy}
+                  width={seg.Ls + 2 * epPx + 2 * depPx} height={seg.hF + epToitPx + 12}
+                  preserveAspectRatio="xMidYMid slice" clipPath={`url(#toitClip-${i})`} />
+              );
+            })()}
+            {(() => {
               const versant = { nord: "nord", sud: "sud", est: "est", ouest: "ouest" }[faceKey];
               if (!versant || toitType === "terrasse") return null;
               const fens = fenetresOfPent(d, seg.inst?.id ?? "m0", versant);
@@ -1406,12 +1663,12 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
               const p = penteOfPent(d, toitType, versant);
               const tanP = Math.tan((p * Math.PI) / 180);
               const sinP = Math.sin((p * Math.PI) / 180);
-              const dWin = 0.20; // profondeur du cadre depuis le bas de pente (m), comme sur le plan (20 px)
+              const dWin = 0.20;
               return fens.map((f, j) => {
                 const x = ox(f, seg);
                 const wPx = f.largeur * scale;
-                const hVert = Math.max(6, f.hauteur * sinP * scale); // hauteur projetée sur la verticale
-                const yLow = seg.yTop - dWin * tanP * scale; // pied du cadre sur la pente
+                const hVert = Math.max(6, f.hauteur * sinP * scale);
+                const yLow = seg.yTop - dWin * tanP * scale;
                 return (
                   <rect key={j} x={x} y={yLow - hVert} width={wPx} height={hVert}
                     fill="#ffffff" stroke="#2563eb" strokeWidth="1.5" rx="1"
@@ -1419,9 +1676,6 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
                 );
               });
             })()}
-            {!seg.face?.actif && (
-              <text x={seg.x0s + seg.Ls / 2} y={seg.yTop + seg.hM / 2} textAnchor="middle" fill="#a8a29e" fontSize="11">Charpente (pas de mur)</text>
-            )}
           </g>
         );
       })}
@@ -1518,6 +1772,8 @@ export default function App() {
   const [flash, setFlash] = useState("");
   const [caracOpen, setCaracOpen] = useState(false); // zone « Caractéristiques techniques » fermée par défaut
   const [chiffrageOpen, setChiffrageOpen] = useState(false); // détail par mur du chiffrage, fermé par défaut
+  const [plancherOpen, setPlancherOpen] = useState(false); // détail plancher par module, fermé par défaut
+  const [charpenteOpen, setCharpenteOpen] = useState(false); // détail charpente par côté, fermé par défaut
   const [pentsOpen, setPentsOpen] = useState(false); // détail par pent couverture, fermé par défaut
   const [pentsBaseOpen, setPentsBaseOpen] = useState(false); // détail par pent complexe de toiture, fermé par défaut
   const [ouvrantsOpen, setOuvrantsOpen] = useState(false); // détail des ouvrants, fermé par défaut
@@ -1776,6 +2032,23 @@ export default function App() {
   // Modules affichés en élévation pour la face choisie : tous les modules,
   // avec leur profondeur par rapport à la face (pour l'occlusion) et la bbox
   // de l'ensemble (pour la projection horizontale de la façade)
+  // module le plus proche d'une face donnée (pour la sélection via la rosace)
+  const frontInstFor = (faceKey) => {
+    const insts = d.instances?.length ? d.instances : [{ id: "m0", x: 0, y: 0, moduleId: d.moduleId }];
+    const b = bboxOf(d, (i) => dimsOf(d, env, i));
+    let best = null, bestDepth = Infinity;
+    for (const inst of insts) {
+      const dm = dimsOf(d, env, inst);
+      let dep;
+      if (faceKey === "sud") dep = b.maxY - (inst.y + dm.largeur);
+      else if (faceKey === "nord") dep = inst.y - b.minY;
+      else if (faceKey === "est") dep = b.maxX - (inst.x + dm.longueur);
+      else dep = inst.x - b.minX;
+      if (dep < bestDepth) { bestDepth = dep; best = inst; }
+    }
+    return best;
+  };
+
   const elevInsts = useMemo(() => {
     const insts = d.instances?.length ? d.instances : [{ id: "m0", x: 0, y: 0, moduleId: d.moduleId, murs: modelMurs() }];
     const b = bboxOf(d, (i) => dimsOf(d, env, i));
@@ -1786,12 +2059,32 @@ export default function App() {
       if (selectedFace === "est") return b.maxX - (inst.x + dm.longueur);
       return inst.x - b.minX;
     };
+    const oppFace = { nord: "sud", sud: "nord", est: "ouest", ouest: "est" }[selectedFace];
     const list = insts.map((inst) => ({
       inst,
       dm: dimsOf(d, env, inst),
+      vis: dimsOf(d, env, inst).visibilite || { murs: true, complexe_toiture: true, plancher: true, couverture: true },
       face: inst.murs?.[selectedFace] || { actif: true, ouvertures: [], surface: null },
+      // côté commun avec un autre module ? (pour les poteaux charpente : cachés par les murs
+      // seulement sur un côté partagé ; visibles sur un mur extérieur)
+      shared: edgesAll.some((e) => e.inst.id === inst.id && e.face === selectedFace && !!e.edge),
       depth: depth(inst),
     }));
+    // segment « traversant » : le mur du CÔTÉ OPPOSÉ, toujours au fond — visible en grisé
+    // derrière une charpente (face avant sans mur), avec son revêtement INTÉRIEUR
+    for (const inst of insts) {
+      const of = inst.murs?.[oppFace];
+      if (!of || !of.actif) continue; // pas de mur au côté opposé
+      list.push({
+        inst,
+        dm: dimsOf(d, env, inst),
+        vis: dimsOf(d, env, inst).visibilite || { murs: true, complexe_toiture: true, plancher: true, couverture: true },
+        face: { ...of, surface: null, surfaceInt: of.surfaceInt ?? null, traversant: true },
+        shared: false,
+        depth: 1e9, // toujours derrière tout
+        traversant: true,
+      });
+    }
     return { list, b };
   }, [d, selectedFace]); // eslint-disable-line react-hooks/exhaustive-deps
   // dernière sauvegarde affichée dans la bande grise de la carte « Sauvegardes »
@@ -2374,7 +2667,7 @@ export default function App() {
             <Rosace size={72} />
           </div>
           <div className="panel-canvas" style={{ height: panels.plan.h }}>
-            <Plan d={d} murs={env.murs} toitType={toitType} selectedFace={selectedFace} planSel={planSel} selInst={d.selInst}
+            <Plan d={d} murs={env.murs} charpente={charpenteSel} toitType={toitType} selectedFace={selectedFace} planSel={planSel} selInst={d.selInst}
             w={effW("plan")} h={panels.plan.h} zoom={zoom}
             cumul={{ longueur: spanXm(d, env), largeur: spanYm(d, env), plancher: surfacePlancher(d, env) }}
             dimsOf={dimsOfInst}
@@ -2423,10 +2716,14 @@ export default function App() {
             <div className="panel-sub panel-sub-col" style={{ marginBottom: 10, alignItems: "flex-start" }}>
               <span className="panel-hint big">choisissez votre façade</span>
               <span className="panel-hint">cliquez une face sur le plan, ou un quart de la rosace</span>
-              <Rosace size={88} active={selectedFace} onPick={(k) => { setSelectedFace(k); setPlanSel(k); }} />
+              <Rosace size={88} active={selectedFace} onPick={(k) => {
+                setSelectedFace(k); setPlanSel(k);
+                const f = frontInstFor(k); // la rosace sélectionne le module le plus proche de la façade
+                if (f) setD((prev) => ({ ...prev, selInst: f.id }));
+              }} />
             </div>
           <div className="panel-canvas" style={{ height: panels.elev.h }}>
-            <Elevation d={d} murs={env.murs} planchers={env.planchers} surfaces={env.facades} toiture={toitureDef} toitType={toitType} faceKey={selectedFace} faceData={face} dims={dmSel} insts={elevInsts.list} bbox={elevInsts.b} depM={depToitM} w={effW("elev")} h={panels.elev.h} />
+            <Elevation d={d} murs={env.murs} planchers={env.planchers} surfaces={env.facades} interieurs={env.interieurs} couvertures={couvListOf(env)} charpente={charpenteSel} toiture={toitureDef} toitType={toitType} faceKey={selectedFace} faceData={face} dims={dmSel} insts={elevInsts.list} bbox={elevInsts.b} depM={depToitM} w={effW("elev")} h={panels.elev.h} />
           </div>
           <div className="panel-resize" onPointerDown={(e) => startResize(e, "elev", true, false)} title="Agrandir/réduire en hauteur (zoom)" />
         </div>
@@ -2584,7 +2881,7 @@ export default function App() {
             <div className="metric"><div className="k">Surface plancher</div><div className="v">{surfacePlancher(d, env).toFixed(1)} m²</div></div>
             <div className="metric"><div className="k">Emprise au sol</div><div className="v">{empriseAuSol(d, env, murSel || env.murs[0]).toFixed(1)} m²</div></div>
             <div className="metric"><div className="k">Surface toiture (cumul)</div><div className="v">{surfaceToitureTotale(d, env, toitType).toFixed(1)} m²</div></div>
-            <div className="metric"><div className="k">Volume brut</div><div className="v">{(d.instances?.length ? d.instances : [{ moduleId: d.moduleId }]).reduce((s, i) => { const dm = dimsOf(d, env, i); return s + dm.longueur * dm.largeur * dm.hauteur; }, 0).toFixed(1)} m³</div></div>
+            <div className="metric"><div className="k">Volume brut</div><div className="v">{volumeBrutOf(d, env).toFixed(1)} m³</div></div>
             <div className="metric"><div className="k">Surface des menuiseries</div><div className="v">{eachEdge(d, (i) => dimsOf(d, env, i), epMurOf(d, env)).reduce((s, e) => s + surfaceMenuiserie(e.a || {}) + surfaceMenuiserie(e.b || {}), 0).toFixed(2)} m²</div></div>
           </div>
           </div>
@@ -2620,6 +2917,12 @@ export default function App() {
               </Field>
             </div>
           )}
+          {!selIsToiture && !face.actif ? (
+            <p style={{ fontSize: "0.85rem", color: "#78716c" }}>
+              Charpente sur ce côté — pas de revêtement (basculez mur/charpente avec la pastille sur le plan).
+            </p>
+          ) : (
+          <>
           <p className="section-label" style={{ marginTop: 0 }}>Revêtement</p>
           <p className="config-hint" style={{ marginTop: 0 }}>
             {selIsToiture
@@ -2699,6 +3002,8 @@ export default function App() {
               })()
             )}
           </div>
+          </>
+          )}
           {!selIsToiture && (
           <>
           <hr className="sep" />
@@ -2934,11 +3239,21 @@ export default function App() {
             </p>
             {chiffrageOpen && surfaces.mursDetail.map((m) => (
               <div className="chiffrage-line" key={m.key}>
-                <span className="chiffrage-left"><span className="chiffrage-k">{m.label}</span><span className="chiffrage-surf">{surfaceNom(m.surfaceId)} - {fmtM2(m.area)} · int. {intNom(m.surfaceIntId)} - {fmtM2(m.areaInt)}</span></span>
+                <span className="chiffrage-left"><span className="chiffrage-k">{m.label}</span><span className="chiffrage-surf">ext. {fmtM2(m.area)} · int. {fmtM2(m.areaInt)}</span></span>
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(m.amount)} HT</span></span>
               </div>
             ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Plancher</span><span className="chiffrage-surf">{fmtM2(surfaces.plancher)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.plancher)} HT</span></div>
+            <p className="section-label carac-toggle" onClick={() => setPlancherOpen((o) => !o)}>
+              <span className={"carac-arrow" + (plancherOpen ? " open" : "")}></span>
+              Détail par module
+            </p>
+            {plancherOpen && (tarifs.plancherDetail || []).map((p) => (
+              <div className="chiffrage-line" key={p.key}>
+                <span className="chiffrage-left"><span className="chiffrage-k">{p.label}</span><span className="chiffrage-surf">{fmtM2(p.area)}</span></span>
+                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amount)} HT</span></span>
+              </div>
+            ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Complexe de toiture</span><span className="chiffrage-surf">{fmtM2(surfaces.toitureBase)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.toiture)} HT</span></div>
             <p className="section-label carac-toggle" onClick={() => setPentsBaseOpen((o) => !o)}>
               <span className={"carac-arrow" + (pentsBaseOpen ? " open" : "")}></span>
@@ -2946,7 +3261,7 @@ export default function App() {
             </p>
             {pentsBaseOpen && (tarifs.pents || []).map((p) => (
               <div className="chiffrage-line" key={"b" + p.numero}>
-                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">int. {intNom(p.surfaceIntId)} — {fmtM2(p.areaBaseInt ?? p.areaBase ?? p.area)}</span></span>
+                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">int. {fmtM2(p.areaBaseInt ?? p.areaBase ?? p.area)}</span></span>
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amountBase)} HT</span></span>
               </div>
             ))}
@@ -2957,7 +3272,7 @@ export default function App() {
             </p>
             {pentsOpen && (tarifs.pents || []).map((p) => (
               <div className="chiffrage-line" key={"c" + p.numero}>
-                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{couvNom(p.surfaceId)} — {fmtM2(p.area)}</span></span>
+                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{fmtM2(p.area)}</span></span>
                 <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amount)} HT</span></span>
               </div>
             ))}
@@ -2984,6 +3299,16 @@ export default function App() {
               </div>
             ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Charpente ({surfaces.charpentes})</span></span><span className="chiffrage-v">{fmtEur(tarifs.charpente)} HT</span></div>
+            <p className="section-label carac-toggle" onClick={() => setCharpenteOpen((o) => !o)}>
+              <span className={"carac-arrow" + (charpenteOpen ? " open" : "")}></span>
+              Détail par côté
+            </p>
+            {charpenteOpen && (tarifs.charpenteDetail || []).map((c) => (
+              <div className="chiffrage-line" key={c.key}>
+                <span className="chiffrage-left"><span className="chiffrage-k">{c.label}</span></span>
+                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(c.amount)} HT</span></span>
+              </div>
+            ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Autonomie ({tarifs.autonomieNb ?? 0} système{(tarifs.autonomieNb ?? 0) > 1 ? "s" : ""})</span><span className="chiffrage-surf">{autoSel?.nom || "—"}</span></span><span className="chiffrage-v">{fmtEur(tarifs.autonomie)} HT</span></div>
             <p className="section-label carac-toggle" onClick={() => setAutonomieOpen((o) => !o)}>
               <span className={"carac-arrow" + (autonomieOpen ? " open" : "")}></span>

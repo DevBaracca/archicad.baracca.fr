@@ -4,7 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
   bboxOf, dimsOf, epaisseurPlancher, toitureDefOf, formeDefOf, toitTypeOf,
   pente1Of, pente2Of, hauteurFaitageDm, basPenteOf, penteOfPent, fenetresOfPent,
-  SOL_SOUS_PLANCHER,
+  couvListOf, couvIdOf, intListOf, intIdOf, rgbHex, mixHex, SOL_SOUS_PLANCHER,
 } from "./App.jsx";
 
 /* Vue 3D en lecture seule du configurateur (Three.js) : on reconstruit la scène
@@ -19,8 +19,12 @@ const rad = (deg) => (deg * Math.PI) / 180;
    construit une dalle d'épaisseur th vers le bas (face inférieure + jupes
    verticales sur le pourtour) — pas de triangles pleins sur les côtés. */
 function roofSlabGeometry(polys, th) {
-  const pos = [];
-  const tri = (a, b, c) => pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  const pos = [], uvs = [];
+  const TEX = 2; // la texture se répète tous les 2 m (projection au sol)
+  const tri = (a, b, c) => {
+    pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+    uvs.push(a.x / TEX, a.z / TEX, b.x / TEX, b.z / TEX, c.x / TEX, c.z / TEX);
+  };
   for (const poly of polys) {
     const n = poly.length;
     for (let i = 1; i < n - 1; i++) tri(poly[0], poly[i], poly[i + 1]); // dessus
@@ -34,6 +38,7 @@ function roofSlabGeometry(polys, th) {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   g.computeVertexNormals();
   return g;
 }
@@ -76,8 +81,44 @@ function buildScene(d, env) {
   const ouvMatPorte = new THREE.MeshLambertMaterial({ color: 0x7c2d12 });
   const ouvMatFen = new THREE.MeshLambertMaterial({ color: 0x0284c7 });
   const fenMat = new THREE.MeshLambertMaterial({ color: 0xbfdbfe });
+  // charpente sélectionnée (épaisseur = section des poteaux/sablières)
+  const charpenteDef = env.charpentes?.find((c) => c.id === d.charpente) || env.charpentes?.[0];
+  const epC = +(charpenteDef?.epaisseur ?? 0.20);
+  const charpMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(css(charpenteDef?.rgb, [140, 107, 89])) });
+
+  // textures des revêtements (catalogue « Extérieur » sur les murs, « Toiture » sur le toit)
+  const textures = [];
+  const textureFor = (url) => {
+    const t = new THREE.TextureLoader().load(url);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; // tuilage
+    textures.push(t);
+    return t;
+  };
+  const surfImgOf = (inst, face) => {
+    const sid = inst?.murs?.[face]?.surface ?? murDef?.surface;
+    return env.facades.find((f) => f.id === sid)?.image || "";
+  };
+  // revêtement INTÉRIEUR de la face (catalogue « Intérieur », sous-face des murs côté 3D)
+  const intImgOf = (inst, face) => {
+    const sid = intIdOf(env, inst?.murs?.[face]?.surfaceInt);
+    return intListOf(env).find((f) => f.id === sid)?.image || "";
+  };
+  const matWithMap = (url, base) => {
+    const m = base.clone();
+    m.map = textureFor(url);
+    m.color.set(0xffffff);
+    return m;
+  };
+  const couvImgOf = (inst, versant) => {
+    const vis = dimsOf(d, env, inst).visibilite;
+    if (vis && vis.couverture === false) return ""; // couverture masquée pour ce module
+    const cid = couvIdOf(env, d.surfacesToiture?.[inst.id]?.[versant], toitDef?.surface);
+    return couvListOf(env).find((c) => c.id === cid)?.image || "";
+  };
 
   let maxTop = 0;
+  const postSeen = new Set(); // dédoublonne les poteaux d'angle entre modules accolés
 
   // Débords effectifs par module et par côté : quand deux modules sont accolés
   // (espacés de l'épaisseur du mur commun), le débord est supprimé sur le côté
@@ -102,6 +143,9 @@ function buildScene(d, env) {
   for (const A of dimsList) {
     for (const B of dimsList) {
       if (A === B) continue;
+      // pas de règles de débord de toiture entre un module et un module sans
+      // complexe de toiture (visibilité décochée dans le back-office)
+      if (A.dm.visibilite?.complexe_toiture === false || B.dm.visibilite?.complexe_toiture === false) continue;
       const ovY = overlap(A.inst.y, A.inst.y + A.dm.largeur, B.inst.y, B.inst.y + B.dm.largeur);
       const ovX = overlap(A.inst.x, A.inst.x + A.dm.longueur, B.inst.x, B.inst.x + B.dm.longueur);
       const gapE = B.inst.x - (A.inst.x + A.dm.longueur); // écart lignes directrices, côté est de A
@@ -134,10 +178,14 @@ function buildScene(d, env) {
     // calées sur le MILIEU DU MUR : la dalle s'étend de ep/2 de chaque côté de la ligne
     // directrice, soit exactement jusqu'aux faces extérieures des murs (elle ne déborde
     // plus des murs) ; modules accolés : les dalles se rejoignent au milieu du mur commun
+    // visibilité des constituants (définie dans le back-office, partie « Modules »)
+    const vis = dm.visibilite || { murs: true, complexe_toiture: true, plancher: true, couverture: true };
     const pN = ep / 2, pS = ep / 2, pE = ep / 2, pW = ep / 2;
-    const pl = new THREE.Mesh(new THREE.BoxGeometry(dm.longueur + pW + pE, epP, dm.largeur + pN + pS), plancherMat);
-    pl.position.set(X0 + dm.longueur / 2, -epP / 2, Z0 + dm.largeur / 2);
-    scene.add(pl);
+    if (vis.plancher) {
+      const pl = new THREE.Mesh(new THREE.BoxGeometry(dm.longueur + pW + pE, epP, dm.largeur + pN + pS), plancherMat);
+      pl.position.set(X0 + dm.longueur / 2, -epP / 2, Z0 + dm.largeur / 2);
+      scene.add(pl);
+    }
     const t1 = Math.tan(rad(p1)), t2 = Math.tan(rad(p2));
     const Hr = H + epToitV; // dessus de la dalle au droit de la ligne directrice (sous-face à H = dessus des murs)
     // Hauteurs de toit calculées sur la LIGNE DIRECTRICE, indépendamment des débords :
@@ -153,27 +201,28 @@ function buildScene(d, env) {
        Le plan de chaque versant passe par la LIGNE DIRECTRICE à hauteur Hr ; le débord
        prolonge la pente au-delà (la rive extérieure descend sous Hr côté gouttière). */
     const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
-    let roofPolys = null;
+    let roofPolysV = null; // [{ poly, versant }] pour texturer chaque versant
     if (tt === "monopente") {
       // versant sud : rive basse au sud, haut du toit au nord ; pente constante p1
       const yN = Hr + (Z1 - rz0) * t1, yS = Hr + (Z1 - rz1) * t1;
-      roofPolys = [[V3(rx0, yN, rz0), V3(rx1, yN, rz0), V3(rx1, yS, rz1), V3(rx0, yS, rz1)]];
+      roofPolysV = [{ versant: "sud", poly: [V3(rx0, yN, rz0), V3(rx1, yN, rz0), V3(rx1, yS, rz1), V3(rx0, yS, rz1)] }];
     } else if (tt === "deuxpentes") {
       const yN = Hr - ov.nord * t1, yS = Hr - ov.sud * t2; // débords qui prolongent la pente
-      roofPolys = [
-        [V3(rx0, yN, rz0), V3(rx1, yN, rz0), V3(rx1, Hr + hF, zr), V3(rx0, Hr + hF, zr)], // versant nord
-        [V3(rx0, yS, rz1), V3(rx1, yS, rz1), V3(rx1, Hr + hF, zr), V3(rx0, Hr + hF, zr)], // versant sud
+      roofPolysV = [
+        { versant: "nord", poly: [V3(rx0, yN, rz0), V3(rx1, yN, rz0), V3(rx1, Hr + hF, zr), V3(rx0, Hr + hF, zr)] },
+        { versant: "sud", poly: [V3(rx0, yS, rz1), V3(rx1, yS, rz1), V3(rx1, Hr + hF, zr), V3(rx0, Hr + hF, zr)] },
       ];
     } else if (tt === "quatrepentes") {
       const run = (rz1 - rz0) / 2;
       const yN = Hr - ov.nord * t1, yS = Hr - ov.sud * t1, yE = Hr - ov.est * t1, yW = Hr - ov.ouest * t1;
-      roofPolys = [
-        [V3(rx0, yN, rz0), V3(rx1, yN, rz0), V3(rx1 - run, Hr + hF, zr), V3(rx0 + run, Hr + hF, zr)], // nord
-        [V3(rx0, yS, rz1), V3(rx1, yS, rz1), V3(rx1 - run, Hr + hF, zr), V3(rx0 + run, Hr + hF, zr)], // sud
-        [V3(rx1, yE, rz0), V3(rx1, yE, rz1), V3(rx1 - run, Hr + hF, zr)], // croupe est
-        [V3(rx0, yW, rz0), V3(rx0, yW, rz1), V3(rx0 + run, Hr + hF, zr)], // croupe ouest
+      roofPolysV = [
+        { versant: "nord", poly: [V3(rx0, yN, rz0), V3(rx1, yN, rz0), V3(rx1 - run, Hr + hF, zr), V3(rx0 + run, Hr + hF, zr)] },
+        { versant: "sud", poly: [V3(rx0, yS, rz1), V3(rx1, yS, rz1), V3(rx1 - run, Hr + hF, zr), V3(rx0 + run, Hr + hF, zr)] },
+        { versant: "est", poly: [V3(rx1, yE, rz0), V3(rx1, yE, rz1), V3(rx1 - run, Hr + hF, zr)] },
+        { versant: "ouest", poly: [V3(rx0, yW, rz0), V3(rx0, yW, rz1), V3(rx0 + run, Hr + hF, zr)] },
       ];
     }
+    const roofPolys = roofPolysV ? roofPolysV.map((r) => r.poly) : null;
     if (roofPolys) for (const poly of roofPolys) for (const p of poly) maxTop = Math.max(maxTop, p.y);
 
     /* ----- plans de coupe = sous-face de la dalle de toit, par versant -----
@@ -181,8 +230,8 @@ function buildScene(d, env) {
        l'intersection des demi-espaces sous chaque versant tombe exactement sous la
        dalle — ça marche pour tous les murs, y compris le pignon est/ouest en deux
        pentes et le mur nord qui monte au toit en monopente. */
-    const clipPlanes = tt === "terrasse"
-      ? [new THREE.Plane(new THREE.Vector3(0, -1, 0), H)] // sous-face horizontale à H
+    const clipPlanes = (tt === "terrasse" || !vis.complexe_toiture)
+      ? [new THREE.Plane(new THREE.Vector3(0, -1, 0), H)] // sous-face horizontale à H (ou pas de toit : murs à H)
       : roofPolys.map((poly) => {
           const q = poly.map((p) => new THREE.Vector3(p.x, p.y - epToitV, p.z)); // sous-face
           const n = new THREE.Vector3().subVectors(q[1], q[0]).cross(new THREE.Vector3().subVectors(q[2], q[0])).normalize();
@@ -194,9 +243,22 @@ function buildScene(d, env) {
     const yMax = H + hF + epToitV + 0.5; // murs construits en pleine hauteur, au-dessus du toit
 
     /* ----- murs : un segment plein par portion entre ouvertures (+ linteau) ----- */
-    for (const face of ["nord", "est", "sud", "ouest"]) {
+    for (const face of (vis.murs ? ["nord", "est", "sud", "ouest"] : [])) {
       const f = inst.murs?.[face] ?? { actif: true, ouvertures: [] };
       if (!f.actif) continue; // charpente : pas de mur
+      // revêtements de cette face : EXTÉRIEUR (face externe du mur) et INTÉRIEUR (face interne)
+      const wImg = surfImgOf(inst, face);
+      const iImg = intImgOf(inst, face);
+      const matSide = wallMatI; // dessus/dessous/petits côtés : couleur pleine
+      const matOuter = wImg ? matWithMap(wImg, wallMatI) : wallMatI;
+      const innerBase = wallMatI.clone();
+      innerBase.color = new THREE.Color(mixHex(rgbHex(murDef?.rgb), "#ffffff", 0.5)); // intérieur éclairci
+      const matInner = iImg ? matWithMap(iImg, wallMatI) : innerBase;
+      // BoxGeometry : matériaux dans l'ordre [+x, -x, +y, -y, +z, -z]
+      const mats = face === "nord" ? [matSide, matSide, matSide, matSide, matInner, matOuter]
+        : face === "sud" ? [matSide, matSide, matSide, matSide, matOuter, matInner]
+        : face === "ouest" ? [matInner, matOuter, matSide, matSide, matSide, matSide]
+        : [matOuter, matInner, matSide, matSide, matSide, matSide];
       const Lface = face === "nord" || face === "sud" ? dm.longueur : dm.largeur;
       const ops = [...(f.ouvertures || [])].sort((a, c) => a.position - c.position);
       const segs = [];
@@ -218,13 +280,13 @@ function buildScene(d, env) {
         const wSeg = u1 - u0, hSeg = y1 - y0;
         if (wSeg <= 1e-6 || hSeg <= 1e-6) continue;
         let mesh;
-        if (face === "nord") mesh = new THREE.Mesh(new THREE.BoxGeometry(wSeg, hSeg, ep), wallMatI),
+        if (face === "nord") mesh = new THREE.Mesh(new THREE.BoxGeometry(wSeg, hSeg, ep), mats),
           mesh.position.set(X0 + (u0 + u1) / 2, (y0 + y1) / 2, Z0 - ep / 2);
-        else if (face === "sud") mesh = new THREE.Mesh(new THREE.BoxGeometry(wSeg, hSeg, ep), wallMatI),
+        else if (face === "sud") mesh = new THREE.Mesh(new THREE.BoxGeometry(wSeg, hSeg, ep), mats),
           mesh.position.set(X0 + (u0 + u1) / 2, (y0 + y1) / 2, Z1 + ep / 2);
-        else if (face === "ouest") mesh = new THREE.Mesh(new THREE.BoxGeometry(ep, hSeg, wSeg), wallMatI),
+        else if (face === "ouest") mesh = new THREE.Mesh(new THREE.BoxGeometry(ep, hSeg, wSeg), mats),
           mesh.position.set(X0 - ep / 2, (y0 + y1) / 2, Z0 + (u0 + u1) / 2);
-        else mesh = new THREE.Mesh(new THREE.BoxGeometry(ep, hSeg, wSeg), wallMatI),
+        else mesh = new THREE.Mesh(new THREE.BoxGeometry(ep, hSeg, wSeg), mats),
           mesh.position.set(X1 + ep / 2, (y0 + y1) / 2, Z0 + (u0 + u1) / 2);
         scene.add(mesh);
       }
@@ -240,20 +302,63 @@ function buildScene(d, env) {
       }
     }
 
+    /* ----- charpente : poteaux aux angles des côtés sans mur + sablière en
+       sous-face de toiture (section = épaisseur de la charpente choisie) ----- */
+    if (vis.murs) {
+      const charpMatI = charpMat.clone();
+      charpMatI.clippingPlanes = clipPlanes; // poteaux coupés sous la toiture comme les murs
+      const actif = {
+        nord: inst.murs?.nord?.actif ?? true, est: inst.murs?.est?.actif ?? true,
+        sud: inst.murs?.sud?.actif ?? true, ouest: inst.murs?.ouest?.actif ?? true,
+      };
+      // angles des AXES de murs (ligne directrice ± ep/2) : les angles partagés entre
+      // deux modules accolés coïncident exactement -> un seul poteau (postSeen)
+      for (const [px, pz, need] of [
+        [X0 - ep / 2, Z0 - ep / 2, !actif.nord || !actif.ouest], [X1 + ep / 2, Z0 - ep / 2, !actif.nord || !actif.est],
+        [X1 + ep / 2, Z1 + ep / 2, !actif.sud || !actif.est], [X0 - ep / 2, Z1 + ep / 2, !actif.sud || !actif.ouest],
+      ]) {
+        if (!need) continue;
+        const key = `${Math.round(px * 100)}:${Math.round(pz * 100)}`;
+        if (postSeen.has(key)) continue; // angle déjà pourvu par un module voisin
+        postSeen.add(key);
+        const post = new THREE.Mesh(new THREE.BoxGeometry(epC, yMax, epC), charpMatI);
+        post.position.set(px, yMax / 2, pz);
+        scene.add(post);
+      }
+      // sablières : une seule par côté charpente ; sur un mur commun, elle est au
+      // milieu du mur et dessinée par le module propriétaire (plus petite coordonnée)
+      const beamY = H - epC / 2; // sous-face à H, au droit de la ligne directrice
+      const sh = shared[inst.id] || {};
+      if (!actif.nord && !sh.nord) { const b = new THREE.Mesh(new THREE.BoxGeometry(dm.longueur, epC, epC), charpMatI); b.position.set(X0 + dm.longueur / 2, beamY, Z0); scene.add(b); }
+      if (!actif.sud) { const b = new THREE.Mesh(new THREE.BoxGeometry(dm.longueur, epC, epC), charpMatI); b.position.set(X0 + dm.longueur / 2, beamY, sh.sud ? Z1 + ep / 2 : Z1); scene.add(b); }
+      if (!actif.ouest && !sh.ouest) { const b = new THREE.Mesh(new THREE.BoxGeometry(epC, epC, dm.largeur), charpMatI); b.position.set(X0, beamY, Z0 + dm.largeur / 2); scene.add(b); }
+      if (!actif.est) { const b = new THREE.Mesh(new THREE.BoxGeometry(epC, epC, dm.largeur), charpMatI); b.position.set(sh.est ? X1 + ep / 2 : X1, beamY, Z0 + dm.largeur / 2); scene.add(b); }
+    }
+
     /* ----- toiture : dalle = face supérieure (roofPolys) + épaisseur vers le bas -----
        (les murs, eux, sont coupés par la sous-face de cette dalle via clipPlanes) */
-    if (tt === "terrasse") {
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(rx1 - rx0, epToitV, rz1 - rz0), roofMat);
+    if (!vis.complexe_toiture) {
+      // complexe de toiture masqué pour ce module : pas de dalle
+    } else if (tt === "terrasse") {
+      const tImg = couvImgOf(inst, "toit"); // terrasse : revêtement du pent « toit »
+      const tMat = tImg ? roofMat.clone() : roofMat;
+      if (tImg) { tMat.map = textureFor(tImg); tMat.color.set(0xffffff); }
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(rx1 - rx0, epToitV, rz1 - rz0), tMat);
       roof.position.set((rx0 + rx1) / 2, H + epToitV / 2, (rz0 + rz1) / 2);
       scene.add(roof);
       maxTop = Math.max(maxTop, H + epToitV);
     } else {
-      const roof = new THREE.Mesh(roofSlabGeometry(roofPolys, epToitV), roofMat);
-      scene.add(roof);
+      // un mesh par versant pour appliquer le revêtement de couverture de chaque pent
+      for (const { poly, versant } of roofPolysV) {
+        const cImg = couvImgOf(inst, versant);
+        const cMat = cImg ? roofMat.clone() : roofMat;
+        if (cImg) { cMat.map = textureFor(cImg); cMat.color.set(0xffffff); }
+        scene.add(new THREE.Mesh(roofSlabGeometry([poly], epToitV), cMat));
+      }
     }
 
     /* ----- fenêtres de toit : cadre posé sur le versant, à 20 cm du bas de pente ----- */
-    if (tt !== "terrasse") {
+    if (tt !== "terrasse" && vis.complexe_toiture) {
       for (const [versant, list] of Object.entries(d.fenetresToit?.[inst.id] || {})) {
         const edge = basPenteOf(tt, versant);
         const p = penteOfPent(d, tt, versant);
@@ -281,7 +386,7 @@ function buildScene(d, env) {
     }
   }
 
-  return { scene, maxTop, span: Math.max(b.maxX - b.minX, b.maxY - b.minY, 4) };
+  return { scene, maxTop, span: Math.max(b.maxX - b.minX, b.maxY - b.minY, 4), textures };
 }
 
 export default function Vue3D({ d, env, w, h }) {
@@ -313,7 +418,7 @@ export default function Vue3D({ d, env, w, h }) {
     mount.appendChild(renderer.domElement);
 
     const dConf = JSON.parse(key).d;
-    const { scene, maxTop, span } = buildScene(dConf, envRef.current);
+    const { scene, maxTop, span, textures } = buildScene(dConf, envRef.current);
 
     const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 500);
     camera.position.set(span * 0.9, Math.max(span * 0.75, maxTop * 1.2), span * 1.15);
@@ -341,7 +446,8 @@ export default function Vue3D({ d, env, w, h }) {
       cancelAnimationFrame(raf);
       ro.disconnect();
       controls.dispose();
-      scene.traverse((o) => { o.geometry?.dispose?.(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose?.()); });
+      scene.traverse((o) => { o.geometry?.dispose?.(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.map?.dispose?.(); m.dispose?.(); }); });
+      (textures || []).forEach((t) => t.dispose?.());
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };

@@ -210,9 +210,10 @@ function archicad_catalogue_defaults(string $kind): array
             // hauteur sous plafond), son visuel, et pour chaque côté s'il
             // s'agit d'un mur ou d'une charpente (faces : nord/est/sud/ouest)
             $facesAllMur = ['nord' => 'mur', 'est' => 'mur', 'sud' => 'mur', 'ouest' => 'mur'];
+            $visAll = ['murs' => true, 'complexe_toiture' => true, 'plancher' => true, 'couverture' => true];
             return [
-                ['id' => 'module-6x3', 'nom' => 'Module 6,00 × 3,00 m — h 2,80 m', 'defaut' => true, 'longueur' => 6.0, 'largeur' => 3.0, 'hauteur' => 2.8, 'faces' => $facesAllMur, 'image' => '', 'tarif' => 0, 'created' => $today],
-                ['id' => 'module-9x36', 'nom' => 'Module 9,00 × 3,60 m — h 2,80 m', 'longueur' => 9.0, 'largeur' => 3.6, 'hauteur' => 2.8, 'faces' => $facesAllMur, 'image' => '', 'tarif' => 0, 'created' => $today],
+                ['id' => 'module-6x3', 'nom' => 'Module 6,00 × 3,00 m — h 2,80 m', 'defaut' => true, 'longueur' => 6.0, 'largeur' => 3.0, 'hauteur' => 2.8, 'faces' => $facesAllMur, 'visibilite' => $visAll, 'image' => '', 'tarif' => 0, 'created' => $today],
+                ['id' => 'module-9x36', 'nom' => 'Module 9,00 × 3,60 m — h 2,80 m', 'longueur' => 9.0, 'largeur' => 3.6, 'hauteur' => 2.8, 'faces' => $facesAllMur, 'visibilite' => $visAll, 'image' => '', 'tarif' => 0, 'created' => $today],
             ];
         case 'murs':
             // favori = nom du favori Archicad à utiliser ('' = aucun, à
@@ -403,6 +404,14 @@ function archicad_load_catalogue(string $kind): array
         }
     }
     $items = archicad_catalogue_normalize_defaut($kind, $items);
+    if ($kind === 'modules') {
+        // Rétro-compatibilité : visibilité des constituants (tout visible par défaut)
+        foreach ($items as $i => $item) {
+            if (!is_array($item['visibilite'] ?? null)) {
+                $items[$i]['visibilite'] = ['murs' => true, 'complexe_toiture' => true, 'plancher' => true, 'couverture' => true];
+            }
+        }
+    }
     if ($kind === 'murs' || $kind === 'toitures') {
         // Surface par défaut = première surface du catalogue surfaces.json
         $firstSurface = (string) (archicad_load_catalogue('surfaces')[0]['id'] ?? '');

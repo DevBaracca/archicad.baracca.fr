@@ -484,14 +484,27 @@
   opacity: 0.85;
 }
 
-/* ----- Actions en icônes (crayon / croix rouge) ----- */
+/* ----- Actions en icônes (étoile / crayon / croix rouge) ----- */
 .admin-actions {
   gap: 6px;
 }
 
+/* Colonne d'actions des listes : largeur fixe pour que les trois icônes soient
+   alignées d'une ligne à l'autre, sans déformation (pas de rétrécissement) */
+td.admin-actions {
+  width: 126px; /* 3 icônes de 30 px + 2 écarts de 6 px + marge */
+  white-space: nowrap;
+  flex-wrap: nowrap;
+}
+
+td.admin-actions > * {
+  flex-shrink: 0;
+}
+
 .admin-inline-form {
-  display: inline;
+  display: inline-flex;
   margin: 0;
+  vertical-align: middle;
 }
 
 /* Boutons d'action façon « + » : pastille pleine, icône blanche
@@ -525,6 +538,26 @@
   background: #b91c1c;
   border-color: #b91c1c;
   color: var(--white);
+}
+
+/* étoile « par défaut » dans les listes : fond vert si sélectionné, grisée sinon */
+.icon-btn.defaut-on {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
+  cursor: default;
+}
+
+.icon-btn.defaut-off {
+  background: #e5e5e4;
+  border-color: #d6d3d1;
+  color: #a8a29e;
+}
+
+.icon-btn.defaut-off:hover {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
 }
 
 /* ----- Zone teintée contenant des cartes blanches (style « notre processus ») ----- */

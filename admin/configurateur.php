@@ -115,6 +115,11 @@ function cat_icon_delete(): string
 // formes, charpentes) : un seul élément par défaut à la fois
 function cat_save_defaut(string $kind, array $item): void
 {
+    // La case « défaut » n'est plus dans les formulaires (étoile dans la liste) :
+    // on ne modifie le drapeau que si le champ est explicitement soumis.
+    if (!array_key_exists('defaut', $_POST)) {
+        return;
+    }
     $v = isset($_POST['defaut']);
     archicad_catalogue_upsert($kind, ['defaut' => $v], (string) $item['id']);
     if ($v) {
@@ -144,6 +149,22 @@ function cat_action_delete(string $actionUrl, string $csrf, string $action, stri
         . $extraHidden
         . '<input type="hidden" name="id" value="' . htmlspecialchars($id) . '">'
         . '<button type="submit" class="icon-btn danger" title="Supprimer">' . cat_icon_delete() . '</button>'
+        . '</form>';
+}
+
+// Action « définir par défaut » (étoile) dans une ligne de liste
+function cat_action_defaut(string $actionUrl, string $csrf, string $section, string $id, bool $isDefaut): string
+{
+    // Sélectionné = étoile verte (indicateur) ; sinon étoile grisée cliquable
+    if ($isDefaut) {
+        return '<span class="icon-btn defaut-on" title="Élément par défaut">★</span>';
+    }
+    return '<form method="post" action="' . htmlspecialchars($actionUrl) . '" class="admin-inline-form">'
+        . '<input type="hidden" name="csrf" value="' . htmlspecialchars($csrf) . '">'
+        . '<input type="hidden" name="action" value="set_defaut">'
+        . '<input type="hidden" name="sous" value="' . htmlspecialchars($section) . '">'
+        . '<input type="hidden" name="id" value="' . htmlspecialchars($id) . '">'
+        . '<button type="submit" class="icon-btn defaut-off" title="Définir comme élément par défaut">★</button>'
         . '</form>';
 }
 
@@ -283,6 +304,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // ----- Modèles de modules (géométrie uniquement) -----
+    if ($action === 'set_defaut') {
+        // Définit l'élément comme « par défaut » de sa rubrique (un seul à la fois)
+        $sous = (string) ($_POST['sous'] ?? '');
+        $id = trim((string) ($_POST['id'] ?? ''));
+        if (in_array($sous, ['modules', 'isolation', 'formes', 'charpentes', 'autonomie'], true) && $id !== '') {
+            archicad_catalogue_set_default($sous, $id);
+        }
+        cat_redirect($section, 'saved');
+    }
     if ($action === 'save_module') {
         $id = trim((string) ($_POST['id'] ?? ''));
         $nom = trim((string) ($_POST['nom'] ?? ''));
@@ -308,6 +338,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'largeur' => $largeur,
             'hauteur' => $hauteur,
             'faces' => $faces,
+            // visibilité des constituants côté client (cochés = visibles)
+            'visibilite' => [
+                'murs' => isset($_POST['vis_murs']),
+                'complexe_toiture' => isset($_POST['vis_complexe_toiture']),
+                'plancher' => isset($_POST['vis_plancher']),
+                'couverture' => isset($_POST['vis_couverture']),
+            ],
         ];
         if (isset($_POST['tarif'])) {
             $fields['tarif'] = round(cat_num('tarif'), 2);
@@ -1185,9 +1222,10 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
             <?php foreach ($modules as $mod): ?>
               <tr>
                 <td><?= cat_thumb($mod) ?></td>
-                <td><strong><?= htmlspecialchars((string) $mod['nom']) ?></strong><?= !empty($mod['defaut']) ? ' <span class="admin-badge-defaut">défaut</span>' : '' ?></td>
+                <td><strong><?= htmlspecialchars((string) $mod['nom']) ?></strong></td>
                 <td><?= cat_cm((float) $mod['longueur']) ?> × <?= cat_cm((float) $mod['largeur']) ?> — h <?= cat_cm((float) $mod['hauteur']) ?><?php $ch = array_keys(array_filter($mod['faces'] ?? [], fn($v) => $v === 'charpente')); if ($ch !== []): ?> — charpente : <?= htmlspecialchars(implode(', ', array_map('ucfirst', $ch))) ?><?php endif; ?></td>
                 <td class="admin-actions">
+                  <?= cat_action_defaut('configurateur.php?section=modules', $csrf, 'modules', (string) $mod['id'], !empty($mod['defaut'])) ?>
                   <?= cat_action_edit('configurateur.php?section=modules&edit=' . urlencode((string) $mod['id'])) ?>
                   <?= cat_action_delete('configurateur.php?section=modules', $csrf, 'delete_module', (string) $mod['id'], 'Supprimer ce modèle de module du catalogue ?') ?>
                 </td>
@@ -1222,7 +1260,6 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         </div>
         <div class="modal-row">
           <div class="admin-form-row admin-form-check">
-            <label><input type="checkbox" name="defaut" value="1"<?= !empty($editModule['defaut']) ? ' checked' : '' ?>> Élément par défaut (appliqué à la première ouverture du configurateur)</label>
           </div>
         </div>
         <hr class="admin-sep">
@@ -1326,6 +1363,16 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         })();
         </script>
         <hr class="admin-sep">
+        <p class="admin-sep-label">Visibilité des constituants dans le configurateur</p>
+        <?php
+        // Cases à cocher : rendre visible ou non chaque constituant du module côté client
+        $modVis = is_array($editModule['visibilite'] ?? null) ? $editModule['visibilite'] : [];
+        foreach (['murs' => 'Murs', 'complexe_toiture' => 'Complexe de toiture', 'plancher' => 'Plancher', 'couverture' => 'Couverture'] as $vk => $vlabel):
+            $checked = !array_key_exists($vk, $modVis) || !empty($modVis[$vk]); // visible par défaut
+        ?>
+        <label><input type="checkbox" name="vis_<?= $vk ?>" value="1"<?= $checked ? ' checked' : '' ?>> <?= $vlabel ?></label>
+        <?php endforeach; ?>
+        <hr class="admin-sep">
         <p class="admin-hint">Un module ne définit que sa géométrie : l'isolation (mur, plancher, toiture) se choisit dans l'onglet « Isolation », la forme de toiture dans l'onglet « Formes ».</p>
         <div class="admin-actions">
           <button type="submit" class="btn btn-cta">Enregistrer</button>
@@ -1350,11 +1397,12 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
             <?php foreach ($isolations as $iso): ?>
               <tr>
                 <td><?= cat_thumb($iso) ?></td>
-                <td><strong><?= htmlspecialchars((string) $iso['nom']) ?></strong><?= !empty($iso['defaut']) ? ' <span class="admin-badge-defaut">défaut</span>' : '' ?></td>
+                <td><strong><?= htmlspecialchars((string) $iso['nom']) ?></strong></td>
                 <td><?= htmlspecialchars($murNames[$iso['mur'] ?? ''] ?? (string) ($iso['mur'] ?? '—')) ?></td>
                 <td><?= htmlspecialchars($plancherNames[$iso['plancher'] ?? ''] ?? (string) ($iso['plancher'] ?? '—')) ?></td>
                 <td><?= htmlspecialchars($toitureLabels[$iso['toiture'] ?? ''] ?? (string) ($iso['toiture'] ?? '—')) ?></td>
                 <td class="admin-actions">
+                  <?= cat_action_defaut('configurateur.php?section=isolation', $csrf, 'isolation', (string) $iso['id'], !empty($iso['defaut'])) ?>
                   <?= cat_action_edit('configurateur.php?section=isolation&edit=' . urlencode((string) $iso['id'])) ?>
                   <?= cat_action_delete('configurateur.php?section=isolation', $csrf, 'delete_isolation', (string) $iso['id'], 'Supprimer cette isolation du catalogue ?') ?>
                 </td>
@@ -1389,7 +1437,6 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         </div>
         <div class="modal-row">
           <div class="admin-form-row admin-form-check">
-            <label><input type="checkbox" name="defaut" value="1"<?= !empty($editIsolation['defaut']) ? ' checked' : '' ?>> Élément par défaut (appliqué à la première ouverture du configurateur)</label>
           </div>
         </div>
         <hr class="admin-sep">
@@ -1443,9 +1490,10 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
               <?php $sysNames = array_values(array_filter(array_map(fn ($sid) => $systemeAutNames[$sid] ?? null, is_array($a['systemes'] ?? null) ? $a['systemes'] : []))); ?>
               <tr>
                 <td><?= cat_thumb($a) ?></td>
-                <td><strong><?= htmlspecialchars((string) $a['nom']) ?></strong><?= !empty($a['defaut']) ? ' <span class="admin-badge-defaut">défaut</span>' : '' ?></td>
+                <td><strong><?= htmlspecialchars((string) $a['nom']) ?></strong></td>
                 <td><?= $sysNames ? htmlspecialchars(implode(', ', $sysNames)) : '—' ?></td>
                 <td class="admin-actions">
+                  <?= cat_action_defaut('configurateur.php?section=autonomie', $csrf, 'autonomie', (string) $a['id'], !empty($a['defaut'])) ?>
                   <?= cat_action_edit('configurateur.php?section=autonomie&edit=' . urlencode((string) $a['id'])) ?>
                   <?= cat_action_delete('configurateur.php?section=autonomie', $csrf, 'delete_autonomie', (string) $a['id'], 'Supprimer ce pack autonomie du catalogue ?') ?>
                 </td>
@@ -1480,7 +1528,6 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         </div>
         <div class="modal-row">
           <div class="admin-form-row admin-form-check">
-            <label><input type="checkbox" name="defaut" value="1"<?= !empty($editAutonomie['defaut']) ? ' checked' : '' ?>> Élément par défaut (appliqué à la première ouverture du configurateur)</label>
           </div>
         </div>
         <hr class="admin-sep">
@@ -1604,11 +1651,12 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
             <?php foreach ($formes as $fo): ?>
               <tr>
                 <td><?= cat_thumb($fo) ?></td>
-                <td><strong><?= htmlspecialchars((string) $fo['nom']) ?></strong><?= !empty($fo['defaut']) ? ' <span class="admin-badge-defaut">défaut</span>' : '' ?></td>
+                <td><strong><?= htmlspecialchars((string) $fo['nom']) ?></strong></td>
                 <td><?= htmlspecialchars($formeGeoLabels[$fo['geometrie'] ?? ''] ?? (string) ($fo['geometrie'] ?? '')) ?></td>
                 <td><?= ($fo['geometrie'] ?? '') === 'deuxpentes' ? (int) ($fo['pente1'] ?? 0) . '° / ' . (int) ($fo['pente2'] ?? 0) . '° (par versant)' : (int) ($fo['pente'] ?? 0) . '°' ?></td>
                 <td><?= (float) ($fo['depassee'] ?? 30) ?> cm</td>
                 <td class="admin-actions">
+                  <?= cat_action_defaut('configurateur.php?section=formes', $csrf, 'formes', (string) $fo['id'], !empty($fo['defaut'])) ?>
                   <?= cat_action_edit('configurateur.php?section=formes&edit=' . urlencode((string) $fo['id'])) ?>
                   <?= cat_action_delete('configurateur.php?section=formes', $csrf, 'delete_forme', (string) $fo['id'], 'Supprimer cette forme de toiture du catalogue ?') ?>
                 </td>
@@ -1643,7 +1691,6 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         </div>
         <div class="modal-row">
           <div class="admin-form-row admin-form-check">
-            <label><input type="checkbox" name="defaut" value="1"<?= !empty($editForme['defaut']) ? ' checked' : '' ?>> Élément par défaut (appliqué à la première ouverture du configurateur)</label>
           </div>
         </div>
         <hr class="admin-sep">
@@ -1717,11 +1764,12 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
             <?php foreach ($charpentes as $ch): $rgbC = $ch['rgb'] ?? [140, 107, 89]; ?>
               <tr>
                 <td><?= cat_thumb($ch) ?></td>
-                <td><strong><?= htmlspecialchars((string) $ch['nom']) ?></strong><?= !empty($ch['defaut']) ? ' <span class="admin-badge-defaut">défaut</span>' : '' ?></td>
+                <td><strong><?= htmlspecialchars((string) $ch['nom']) ?></strong></td>
                 <td><?= cat_cm((float) ($ch['epaisseur'] ?? 0.20)) ?></td>
                 <td><span class="admin-color-swatch" style="background-color: <?= cat_hex($rgbC) ?>;"></span> <?= cat_hex($rgbC) ?></td>
                 <td><?= ($ch['favori'] ?? '') !== '' ? htmlspecialchars((string) $ch['favori']) : '—' ?></td>
                 <td class="admin-actions">
+                  <?= cat_action_defaut('configurateur.php?section=charpentes', $csrf, 'charpentes', (string) $ch['id'], !empty($ch['defaut'])) ?>
                   <?= cat_action_edit('configurateur.php?section=charpentes&edit=' . urlencode((string) $ch['id'])) ?>
                   <?= cat_action_delete('configurateur.php?section=charpentes', $csrf, 'delete_charpente', (string) $ch['id'], 'Supprimer cette charpente du catalogue ?') ?>
                 </td>
@@ -1756,7 +1804,6 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         </div>
         <div class="modal-row">
           <div class="admin-form-row admin-form-check">
-            <label><input type="checkbox" name="defaut" value="1"<?= !empty($editCharpente['defaut']) ? ' checked' : '' ?>> Élément par défaut (appliqué à la première ouverture du configurateur)</label>
           </div>
         </div>
         <hr class="admin-sep">
