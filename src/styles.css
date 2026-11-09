@@ -20,7 +20,7 @@
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  background: #ffffff; /* fond clair ; le gris ne couvre que le stage (plan/élévation) */
+  background: transparent; /* aucun fond : le configurateur se fond dans la page (iframe transparente) */
   color: var(--text);
 }
 /* pleine largeur, collé en haut : les conteneurs de la première ligne
@@ -71,7 +71,7 @@ header.top p { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; }
    le fond de page — pas de carte blanche. Un simple trait en bas de panneau les
    sépare. La barre de titre sert de poignée de déplacement (clic-glissé). */
 .left-col { flex: 1; min-width: 0; }
-.stage { position: relative; width: 100%; background: var(--bg); border-radius: 12px; }
+.stage { position: relative; width: 100%; background: #ffffff; border: 1px solid var(--border); border-radius: 12px; } /* plan et façades sur fond blanc, comme le reste de la page */
 .panel { position: absolute; width: calc(100% - 20px); /* largeur = largeur du stage (fenêtre) - 10 px de chaque côté */ padding-bottom: 12px; border-bottom: 1px solid #b9b3ad; }
 .panel-handle {
   cursor: grab; user-select: none; touch-action: none;

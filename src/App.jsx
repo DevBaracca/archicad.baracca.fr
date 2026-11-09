@@ -1141,7 +1141,7 @@ function Plan({ d, murs, toitType, selectedFace, planSel, selInst, cumul, dimsOf
               return (
                 <rect key={j} x={ox} y={oy}
                   width={p.horiz ? ow : oh} height={p.horiz ? oh : ow}
-                  fill={o.type === "porte" ? "#7c2d12" : "#0284c7"} opacity="0.85" rx="2" />
+                  fill={o.type === "porte" ? "#7c2d12" : "#0284c7"} rx="2" />
               );
             })}
             {isOuter(e) && (
@@ -1255,7 +1255,7 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
     const debL = horiz && debG ? debP : 0;
     const debR = horiz && debD ? debP : 0;
     const xaS = x0s - epPx - debL, xbS = x0s + Ls + epPx + debR;
-    const fillToit = "rgba(120,113,108,0.45)"; // bande pleine (avec ses côtés) en vue sud/nord
+    const fillToit = mixHex(rgbHex(toitRgb), "#ffffff", 0.55); // bande pleine opaque (teintée couleur toiture), la grille ne transparaît pas
     if (toitType === "terrasse") return { path: `M ${xaS} ${yTop} L ${xbS} ${yTop} L ${xbS} ${yTop - epToitPx} L ${xaS} ${yTop - epToitPx} Z`, fill: fillToit, dash: null, cote: false };
     if (toitType === "monopente") {
       if (horiz) return { path: `M ${xaS} ${yTop} L ${xaS} ${yTop - hF} L ${xbS} ${yTop - hF} L ${xbS} ${yTop} Z`, fill: fillToit, dash: null, cote: true };
@@ -1353,30 +1353,60 @@ function Elevation({ d, murs, planchers, surfaces, toiture, toitType, faceKey, f
         const sd = surfaceOf(seg.face);
         const t = maxDepth ? (seg.depth ?? 0) / maxDepth : 0; // 0 = devant, 1 = fond
         return (
-          <g key={seg.inst?.id || i} opacity={1 - 0.4 * t}>
-            {/* mur du segment (ligne directrice intérieure, épaisseur vers l'extérieur) ;
-                grisé selon la profondeur pour accentuer l'effet de profondeur */}
+          <g key={seg.inst?.id || i}>
+            {/* mur du segment (ligne directrice intérieure, épaisseur vers l'extérieur), opaque :
+                la grille de fond ne doit pas transparaître ; la profondeur se fait par un
+                mélange vers le blanc (ou un voile blanc sur les murs texturés) */}
             {seg.toit.pignon ? (
               /* vue de pignon : le mur monte jusqu'au faitage de la toiture */
               <path
                 d={`M ${seg.x0s - epPx} ${yPlancher} L ${seg.x0s - epPx} ${seg.yTop} L ${seg.toit.apexX} ${seg.yTop - seg.hF} L ${seg.x0s + seg.Ls + epPx} ${seg.yTop} L ${seg.x0s + seg.Ls + epPx} ${yPlancher} Z`}
-                fill={sd?.image ? `url(#murSurf-${i})` : mixHex(rgbHex(murDef.rgb), "#a8a29e", 0.7 * t)} opacity="0.85" stroke="#78716c" />
+                fill={sd?.image ? `url(#murSurf-${i})` : mixHex(rgbHex(murDef.rgb), "#ffffff", 0.6 * t)} stroke="#78716c" />
             ) : (
             <rect x={seg.x0s - epPx} y={seg.yTop} width={seg.Ls + 2 * epPx} height={seg.hM}
-              fill={sd?.image ? `url(#murSurf-${i})` : mixHex(rgbHex(murDef.rgb), "#a8a29e", 0.7 * t)} opacity="0.85" stroke="#78716c" />
+              fill={sd?.image ? `url(#murSurf-${i})` : mixHex(rgbHex(murDef.rgb), "#ffffff", 0.6 * t)} stroke="#78716c" />
             )}
+            {sd?.image && t > 0 && (seg.toit.pignon ? (
+              <path d={`M ${seg.x0s - epPx} ${yPlancher} L ${seg.x0s - epPx} ${seg.yTop} L ${seg.toit.apexX} ${seg.yTop - seg.hF} L ${seg.x0s + seg.Ls + epPx} ${seg.yTop} L ${seg.x0s + seg.Ls + epPx} ${yPlancher} Z`}
+                fill="#ffffff" opacity={0.6 * t} stroke="none" />
+            ) : (
+              <rect x={seg.x0s - epPx} y={seg.yTop} width={seg.Ls + 2 * epPx} height={seg.hM}
+                fill="#ffffff" opacity={0.6 * t} stroke="none" />
+            ))}
             <line x1={seg.x0s} y1={seg.yTop} x2={seg.x0s} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
             <line x1={seg.x0s + seg.Ls} y1={seg.yTop} x2={seg.x0s + seg.Ls} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
             {seg.face?.actif && seg.face.ouvertures.map((o, j) => (
               <rect key={j} x={ox(o, seg)} y={yPlancher - o.hauteur * scale}
                 width={o.largeur * scale} height={o.hauteur * scale}
-                fill={o.type === "porte" ? "#7c2d12" : "#0284c7"} opacity="0.85" rx="2" />
+                fill={o.type === "porte" ? "#7c2d12" : "#0284c7"} rx="2" />
             ))}
             {/* toiture du segment — un seul pan visible par zone de chevauchement
                 (le plus proche de la face recouvre les autres) */}
             {seg.toitVisible !== false && (
-              <path d={seg.toit.path} stroke={mixHex(rgbHex(toitRgb), "#a8a29e", 0.7 * t)} strokeWidth="3" fill={seg.toit.fill} strokeLinejoin="round" strokeLinecap="butt" />
+              <path d={seg.toit.path} stroke={mixHex(rgbHex(toitRgb), "#ffffff", 0.6 * t)} strokeWidth="3" fill={seg.toit.fill} strokeLinejoin="round" strokeLinecap="butt" />
             )}
+            {/* fenêtres de toit du versant correspondant à cette façade (pent -> face) */}
+            {seg.toitVisible !== false && (() => {
+              const versant = { nord: "nord", sud: "sud", est: "est", ouest: "ouest" }[faceKey];
+              if (!versant || toitType === "terrasse") return null;
+              const fens = fenetresOfPent(d, seg.inst?.id ?? "m0", versant);
+              if (!fens.length) return null;
+              const p = penteOfPent(d, toitType, versant);
+              const tanP = Math.tan((p * Math.PI) / 180);
+              const sinP = Math.sin((p * Math.PI) / 180);
+              const dWin = 0.20; // profondeur du cadre depuis le bas de pente (m), comme sur le plan (20 px)
+              return fens.map((f, j) => {
+                const x = ox(f, seg);
+                const wPx = f.largeur * scale;
+                const hVert = Math.max(6, f.hauteur * sinP * scale); // hauteur projetée sur la verticale
+                const yLow = seg.yTop - dWin * tanP * scale; // pied du cadre sur la pente
+                return (
+                  <rect key={j} x={x} y={yLow - hVert} width={wPx} height={hVert}
+                    fill="#ffffff" stroke="#2563eb" strokeWidth="1.5" rx="1"
+                    title={`Fenêtre de toit — pent ${versant}`} />
+                );
+              });
+            })()}
             {!seg.face?.actif && (
               <text x={seg.x0s + seg.Ls / 2} y={seg.yTop + seg.hM / 2} textAnchor="middle" fill="#a8a29e" fontSize="11">Charpente (pas de mur)</text>
             )}

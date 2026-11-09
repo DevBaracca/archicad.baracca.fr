@@ -58,7 +58,7 @@ include 'includes/head.html';
             id="configurateur-frame"
             src="/configurateur/index.html<?= ($configId !== '' ? '?config=' . urlencode($configId) . '&' : '?') ?>v=<?= @filemtime(__DIR__ . '/configurateur/index.html') ?: time() ?>"
             width="100%" height="900"
-            style="border:0; border-radius:12px; box-shadow: var(--box-shadow-xl);"
+            style="border:0; background:transparent;"
             title="Configurateur de modules Baracca">
           </iframe>
         </div>
