@@ -95,6 +95,7 @@ function buildScene(d, env) {
     textures.push(t);
     return t;
   };
+  if (charpenteDef?.image) { charpMat.map = textureFor(charpenteDef.image); charpMat.color.set(0xffffff); } // visuel charpente sur poteaux/sablières
   const surfImgOf = (inst, face) => {
     const sid = inst?.murs?.[face]?.surface ?? murDef?.surface;
     return env.facades.find((f) => f.id === sid)?.image || "";
@@ -182,7 +183,16 @@ function buildScene(d, env) {
     const vis = dm.visibilite || { murs: true, complexe_toiture: true, plancher: true, couverture: true };
     const pN = ep / 2, pS = ep / 2, pE = ep / 2, pW = ep / 2;
     if (vis.plancher) {
-      const pl = new THREE.Mesh(new THREE.BoxGeometry(dm.longueur + pW + pE, epP, dm.largeur + pN + pS), plancherMat);
+      // dessus du plancher = revêtement Intérieur choisi ; chants = revêtement Extérieur choisi
+      const hautImg = intListOf(env).find((f) => f.id === intIdOf(env, d.revetementPlancher))?.image || "";
+      const chantImg = env.facades.find((f) => f.id === (d.revetementChantPlancher ?? murDef?.surface))?.image || "";
+      const matTop = hautImg ? matWithMap(hautImg, plancherMat) : plancherMat;
+      const matSide = chantImg ? matWithMap(chantImg, plancherMat) : plancherMat;
+      // BoxGeometry : [+x, -x, +y(dessus), -y, +z, -z]
+      const pl = new THREE.Mesh(
+        new THREE.BoxGeometry(dm.longueur + pW + pE, epP, dm.largeur + pN + pS),
+        [matSide, matSide, matTop, plancherMat, matSide, matSide]
+      );
       pl.position.set(X0 + dm.longueur / 2, -epP / 2, Z0 + dm.largeur / 2);
       scene.add(pl);
     }

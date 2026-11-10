@@ -216,6 +216,9 @@ hr.sep { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 .card-title.card-toggle { cursor: pointer; display: flex; align-items: center; gap: 8px; user-select: none; }
 .card-title.card-toggle .carac-arrow { border-color: #fff; }
 .chiffrage-total.solo { margin: 0; border-radius: 0 0 var(--radius) var(--radius); }
+/* détail chiffrage : bloc par élément (séparateur fin entre éléments) + sous-lignes revêtements */
+.chiffrage-item + .chiffrage-item { border-top: 1px solid var(--border); margin-top: 5px; padding-top: 5px; }
+.chiffrage-sub { display: flex; justify-content: space-between; gap: 8px; font-size: 0.75rem; color: var(--muted); padding-left: 16px; }
 
 /* plan : pastille mur/charpente sur chaque face */
 .plan-face-toggle { cursor: pointer; }
@@ -347,6 +350,11 @@ footer.foot { margin-top: 12px; font-size: 0.72rem; color: #a8a29e; text-align: 
 .choix-row.checked { opacity: 1; border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); } /* surbrillance = sélection */
 .choix-thumb { width: 88px; height: 88px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); flex-shrink: 0; background: #fff; } /* visuel 2x plus gros */
 .choix-thumb-empty { display: inline-block; background: #f5f5f4; }
+/* select de revêtement dans les pop-ups : rangée compacte select + petit visuel */
+.revet-select-row { display: flex; align-items: center; gap: 8px; }
+.revet-select-row select { flex: 1; min-width: 0; }
+.revet-thumb-sm { width: 26px; height: 26px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); background: #fff; flex-shrink: 0; }
+.revet-thumb-sm-empty { display: inline-block; background: #f5f5f4; }
 .choix-nom { font-weight: 600; }
 .choix-detail { color: var(--muted); font-size: 0.78rem; }
 

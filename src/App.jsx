@@ -106,6 +106,8 @@ const DEFAULTS = {
   pente2: null, // pente du versant 2 (deux pentes asymétriques)
   pignon: true,
   plancher: "clt_dalle",
+  revetementPlancher: null,    // revêtement de la surface SUPÉRIEURE du plancher (catalogue « Intérieur »)
+  revetementChantPlancher: null, // revêtement des CHANTS (côtés) du plancher (catalogue « Extérieur » / surfaces)
   facade: "bardage_bois",
   surfaceToiture: null, // (ancien schéma) surface de toiture unique — migré vers surfacesToiture
   surfacesToiture: {}, // { [instId]: { [versant]: couvertureId|null } } — un revêtement de TOITURE (catalogue « Toiture ») par pent de chaque module
@@ -550,15 +552,18 @@ function mursChiffrage(d, env) {
     const sdInt = intListOf(env).find((f) => f.id === surfaceIntId);
     // mur + revêtement ext sur la surface EXTÉRIEURE (ligne directrice + épaisseurs) ;
     // revêtement intérieur sur la LIGNE DIRECTRICE seule (sans épaisseurs de mur)
-    const amount = (eurM2(murDef) * margeOf(env, "murs") + eurM2(sd) * margeOf(env, "surfaces")) * area
-      + eurM2(sdInt) * margeOf(env, "interieurs") * areaInt;
+    // montant total = base (mur) + revêtement ext + revêtement int, détaillé à l'affichage
+    const amountMur = eurM2(murDef) * margeOf(env, "murs") * area;
+    const amountExt = eurM2(sd) * margeOf(env, "surfaces") * area;
+    const amountInt = eurM2(sdInt) * margeOf(env, "interieurs") * areaInt;
+    const amount = amountMur + amountExt + amountInt;
     total += area;
     detail.push({
       key: e.edge || `${e.inst.id}-${e.face}`,
       numero: e.numero,
       label: `Mur ${e.numero}` + (e.edge ? " (partagé)" : ""),
       instId: e.inst.id, // instance propriétaire de l'arête (promotions)
-      surfaceId, surfaceIntId, area, areaInt, amount,
+      surfaceId, surfaceIntId, area, areaInt, amount, amountMur, amountExt, amountInt,
     });
   });
   return { total, detail };
@@ -597,10 +602,17 @@ function surfacesChiffrage(d, env) {
     const dm = dimsOf(d, env, i);
     return { key: i.id || `m${idx}`, instId: i.id, label: `Module ${idx + 1}${dm.nom ? ` — ${dm.nom}` : ""}`, area: dm.longueur * dm.largeur };
   }).filter((p, idx) => visOfInst(d, env, insts0[idx]).plancher);
+  // surface des CHANTS du plancher (périmètre ligne directrice des modules visibles × épaisseur)
+  const epP = epaisseurPlancher(d, env.planchers);
+  const plancherChant = insts0.reduce((s, i) => {
+    if (!visOfInst(d, env, i).plancher) return s;
+    const dm = dimsOf(d, env, i);
+    return s + 2 * (dm.longueur + dm.largeur) * epP;
+  }, 0);
   // fenêtres de toit : nombre total posées sur les pents
   const fenetresToit = Object.values(d.fenetresToit || {}).reduce(
     (n, perInst) => n + Object.values(perInst || {}).reduce((s, list) => s + (list?.length || 0), 0), 0);
-  return { murs: M.total, mursDetail: M.detail, plancher, plancherDetail, toiture: toitureS, toitureBase, pents, ouvrants, charpentes, fenetresToit };
+  return { murs: M.total, mursDetail: M.detail, plancher, plancherDetail, plancherChant, toiture: toitureS, toitureBase, pents, ouvrants, charpentes, fenetresToit };
 }
 
 function tarifTotal(d, env) {
@@ -688,17 +700,30 @@ function tarifTotal(d, env) {
   });
   const fenetresToitAmount = fenetresToitDetail.reduce((s, f) => s + f.amount, 0);
   const moduleBrut = module ? +module.tarif || 0 : 0;
+  // plancher : base + revêtement supérieur (Intérieur) sur la surface + revêtement des chants (Extérieur)
+  const sdPlancherHaut = intListOf(env).find((f) => f.id === intIdOf(env, d.revetementPlancher));
+  const sdChant = env.facades.find((f) => f.id === (d.revetementChantPlancher ?? mur?.surface));
+  const plancherBase = eurM2(plancher) * margeOf(env, "planchers") * S.plancher;
+  const plancherHautAmount = eurM2(sdPlancherHaut) * margeOf(env, "interieurs") * S.plancher;
+  const plancherChantAmount = eurM2(sdChant) * margeOf(env, "surfaces") * (S.plancherChant || 0);
   const t = {
     module: moduleBrut,
     mur: murAmount,
-    plancher: eurM2(plancher) * margeOf(env, "planchers") * S.plancher,
+    plancher: plancherBase + plancherHautAmount + plancherChantAmount,
+    plancherBase, plancherHautAmount, plancherChantAmount,
+    plancherHautId: sdPlancherHaut?.id || "", plancherChantId: sdChant?.id || "", plancherChantArea: S.plancherChant || 0,
     facade: (facade ? +facade.tarif || 0 : 0) * margeOf(env, "surfaces"),
     toiture: toitureAmount,
     couverture: couvertureAmount,
     menuiseries,
     charpente: charpenteAmount,
     charpenteDetail,
-    plancherDetail: (S.plancherDetail || []).map((p) => ({ ...p, amount: eurM2(plancher) * margeOf(env, "planchers") * p.area })),
+    plancherDetail: (S.plancherDetail || []).map((p) => ({
+      ...p,
+      amount: eurM2(plancher) * margeOf(env, "planchers") * p.area + eurM2(sdPlancherHaut) * margeOf(env, "interieurs") * p.area,
+      amountBase: eurM2(plancher) * margeOf(env, "planchers") * p.area,
+      amountHaut: eurM2(sdPlancherHaut) * margeOf(env, "interieurs") * p.area,
+    })),
     autonomie: autonomieAmount,
     autonomieNb: systemesSel.length,
     fenetresToit: fenetresToitAmount,
@@ -711,14 +736,17 @@ function tarifTotal(d, env) {
     const sdCouv = couvListOf(env).find((f) => f.id === p.surfaceId);
     const sdInt = intListOf(env).find((f) => f.id === p.surfaceIntId);
     const pv = pentVisOf(d, env, p);
+    const areaBase = p.areaBase ?? p.area;
+    const areaBaseInt = p.areaBaseInt ?? areaBase;
+    // complexe : montant de base = structure seule ; sous-face = revêtement intérieur séparé
+    const amountBaseStruct = pv.complexe_toiture ? eurM2(toiture) * margeOf(env, "toitures") * areaBase : 0;
+    const amountBaseInt = pv.complexe_toiture ? eurM2(sdInt) * margeOf(env, "interieurs") * areaBaseInt : 0;
     return {
       ...p,
       // visibilité des constituants du module : couverture et/ou complexe masqués = montant à 0
       amount: pv.couverture ? eurM2(sdCouv) * margeOf(env, "couvertures") * p.area : 0, // couverture : avec débords
-      amountBase: pv.complexe_toiture // structure du complexe + sous-face, sans débords
-        ? eurM2(toiture) * margeOf(env, "toitures") * (p.areaBase ?? p.area)
-          + eurM2(sdInt) * margeOf(env, "interieurs") * (p.areaBaseInt ?? p.areaBase ?? p.area)
-        : 0,
+      amountBase: amountBaseStruct + amountBaseInt, // total complexe (structure + sous-face)
+      amountBaseStruct, amountBaseInt, areaBase, areaBaseInt,
     };
   });
   // Promotion active (code saisi + période en cours + module affecté) : la
@@ -1132,6 +1160,11 @@ function Plan({ d, murs, charpente, toitType, selectedFace, planSel, selInst, cu
         <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
           <path d="M10 0 H0 V10" fill="none" stroke="#d9d3cb" strokeWidth="0.6" />
         </pattern>
+        {charpente?.image && (
+          <pattern id="charpPat" width="80" height="80" patternUnits="userSpaceOnUse">
+            <image href={charpente.image} xlinkHref={charpente.image} x="0" y="0" width="80" height="80" preserveAspectRatio="xMidYMid slice" />
+          </pattern>
+        )}
         <pattern id="grid100" width="50" height="50" patternUnits="userSpaceOnUse">
           <path d="M50 0 H0 V50" fill="none" stroke="#c8c0b4" strokeWidth="1" />
         </pattern>
@@ -1216,7 +1249,7 @@ function Plan({ d, murs, charpente, toitType, selectedFace, planSel, selInst, cu
           charpente restent visibles, dessinés après les murs */}
       {posts.filter((p) => !p.outer).map((pt, i) => (
         <rect key={"bg-" + i} x={pt.x - pt.s / 2} y={pt.y - pt.s / 2} width={pt.s} height={pt.s}
-          fill={rgbHex(charpente?.rgb || [140, 107, 89])} stroke="#57534e" strokeWidth="1" pointerEvents="none" />
+          fill={charpente?.image ? "url(#charpPat)" : rgbHex(charpente?.rgb || [140, 107, 89])} stroke="#57534e" strokeWidth="1" pointerEvents="none" />
       ))}
       {rects.map(({ e, ...p }, i) => {
         const isSel = selInst === e.inst.id && selectedFace === e.face && planSel !== "toiture";
@@ -1284,7 +1317,7 @@ function Plan({ d, murs, charpente, toitType, selectedFace, planSel, selInst, cu
       {/* poteaux charpente des murs EXTÉRIEURS : visibles au-dessus des murs */}
       {posts.filter((p) => p.outer).map((pt, i) => (
         <rect key={"fg-" + i} x={pt.x - pt.s / 2} y={pt.y - pt.s / 2} width={pt.s} height={pt.s}
-          fill={rgbHex(charpente?.rgb || [140, 107, 89])} stroke="#57534e" strokeWidth="1" pointerEvents="none" />
+          fill={charpente?.image ? "url(#charpPat)" : rgbHex(charpente?.rgb || [140, 107, 89])} stroke="#57534e" strokeWidth="1" pointerEvents="none" />
       ))}
       {/* cotes globales (cumul des modules), dessinées à l'intérieur du module */}
       <line x1={X(b.minX)} y1={Y(b.minY) + 12} x2={X(b.maxX)} y2={Y(b.minY) + 12} stroke="#a8a29e" strokeDasharray="4 3" />
@@ -1299,7 +1332,7 @@ function Plan({ d, murs, charpente, toitType, selectedFace, planSel, selInst, cu
 /* =================================================================
    Élévation SVG (façade sud)
 ================================================================= */
-function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, charpente, toiture, toitType, faceKey, faceData, dims, w, h, insts, bbox, depM }) {
+function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, charpente, toiture, toitType, faceKey, faceData, dims, w, h, insts, bbox, depM, onSelectPlancher }) {
   const W = w ?? 560, H = h ?? 320, margin = 60;
   const horiz = faceKey === "nord" || faceKey === "sud";
   // Un segment par module : l'élévation est une vraie projection de la façade,
@@ -1484,6 +1517,19 @@ function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, char
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ width: "100%", height: "100%" }}>
       <defs>
         {/* même quadrillage que le plan, en fond de façade */}
+        {charpente?.image && (
+          <pattern id="charpPatE" width="80" height="80" patternUnits="userSpaceOnUse">
+            <image href={charpente.image} xlinkHref={charpente.image} x="0" y="0" width="80" height="80" preserveAspectRatio="xMidYMid slice" />
+          </pattern>
+        )}
+        {(() => {
+          const chantImg = surfaces.find((f) => f.id === (d.revetementChantPlancher ?? murDef?.surface))?.image;
+          return chantImg ? (
+            <pattern id="chantPatE" width="80" height="80" patternUnits="userSpaceOnUse">
+              <image href={chantImg} xlinkHref={chantImg} x="0" y="0" width="80" height="80" preserveAspectRatio="xMidYMid slice" />
+            </pattern>
+          ) : null;
+        })()}
         <pattern id="gridE" width="10" height="10" patternUnits="userSpaceOnUse">
           <path d="M10 0 H0 V10" fill="none" stroke="#d9d3cb" strokeWidth="0.6" />
         </pattern>
@@ -1497,7 +1543,9 @@ function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, char
       {/* plancher continu : ligne directrice en haut (bas des murs), épaisseur vers le bas,
           bords à 21,7 cm au-delà de la ligne directrice des murs */}
       <rect x={pa} y={yPlancher} width={L + 2 * depPx} height={epPxP}
-        fill="#e7e5e4" stroke="#78716c" />
+        fill={surfaces.find((f) => f.id === (d.revetementChantPlancher ?? murDef?.surface))?.image ? "url(#chantPatE)" : "#e7e5e4"}
+        stroke="#78716c" style={{ cursor: onSelectPlancher ? "pointer" : undefined }}
+        onClick={onSelectPlancher} title="Choisir les revêtements du plancher" />
       <line x1={pa} y1={yPlancher} x2={pb} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
       <defs>
         {placed.map((seg, i) => {
@@ -1559,7 +1607,7 @@ function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, char
         const t = maxDepth ? (p.seg.depth ?? 0) / maxDepth : 0;
         return (
           <rect key={"bg-" + i} x={p.x - epC / 2} y={p.seg.yTop} width={epC} height={yPlancher - p.seg.yTop}
-            fill={mixHex(rgbHex(charpente?.rgb || [140, 107, 89]), "#ffffff", 0.6 * t)} stroke="#57534e" strokeWidth="1" pointerEvents="none" clipPath={p.cut} />
+            fill={charpente?.image ? "url(#charpPatE)" : mixHex(rgbHex(charpente?.rgb || [140, 107, 89]), "#ffffff", 0.6 * t)} stroke="#57534e" strokeWidth="1" pointerEvents="none" clipPath={p.cut} />
         );
       })}
       {placed.map((seg, i) => {
@@ -1614,7 +1662,7 @@ function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, char
               // charpente : sablière horizontale en sous-face de toiture (aussi en
               // vue est/ouest) ; en pignon elle est coupée par la ligne de toit
               const epC = Math.max(4, (charpente?.epaisseur ?? 0.20) * scale);
-              const col = mixHex(rgbHex(charpente?.rgb || [140, 107, 89]), "#ffffff", 0.6 * t); // grisé selon la profondeur, comme les murs
+              const col = charpente?.image ? "url(#charpPatE)" : mixHex(rgbHex(charpente?.rgb || [140, 107, 89]), "#ffffff", 0.6 * t); // visuel charpente si renseigné, sinon couleur (grisée selon la profondeur)
               const cut = seg.toit.pignon && seg.toitVisible !== false ? `url(#toitCut-${i})` : undefined;
               return (
                 <g clipPath={cut}>
@@ -1633,7 +1681,7 @@ function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, char
         const epC = Math.max(4, (charpente?.epaisseur ?? 0.20) * scale);
         return (
           <rect key={"fg-" + i} x={p.x - epC / 2} y={p.seg.yTop} width={epC} height={yPlancher - p.seg.yTop}
-            fill={rgbHex(charpente?.rgb || [140, 107, 89])} stroke="#57534e" strokeWidth="1" pointerEvents="none" clipPath={p.cut} />
+            fill={charpente?.image ? "url(#charpPatE)" : rgbHex(charpente?.rgb || [140, 107, 89])} stroke="#57534e" strokeWidth="1" pointerEvents="none" clipPath={p.cut} />
         );
       })}
       {/* toitures rendues en DERNIER : le toit prend le dessus sur les charpentes
@@ -1697,6 +1745,27 @@ const Field = ({ label, children }) => (
     {children}
   </div>
 );
+
+/* Choix d'un revêtement : liste déroulante compacte (comme avant) + petit visuel
+   du revêtement actuellement sélectionné à côté (bien plus petit que les grandes
+   vignettes des listes de « Réglages généraux ») */
+const RevetSelect = ({ label, value, onChange, options, defaultLabel }) => {
+  const cur = options.find((o) => o.id === value);
+  const img = cur?.image || "";
+  return (
+    <Field label={label}>
+      <div className="revet-select-row">
+        {img
+          ? <img src={img} alt="" className="revet-thumb-sm" />
+          : <span className="revet-thumb-sm revet-thumb-sm-empty" />}
+        <select value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+          {defaultLabel && <option value="">{defaultLabel}</option>}
+          {options.map((o) => <option key={o.id} value={o.id}>{o.nom}</option>)}
+        </select>
+      </div>
+    </Field>
+  );
+};
 
 /* Rubrique dépliable (accordéon) de « Réglages généraux » : titre + flèche +
    texte explicatif, puis la liste des choix quand ouverte */
@@ -1769,6 +1838,7 @@ export default function App() {
   const [reglagesOpen, setReglagesOpen] = useState(false); // conteneurs de la première ligne repliés au démarrage
   const [soumettreOpen, setSoumettreOpen] = useState(false); // pop-up « Soumettre » fermée par défaut
   const [murOpen, setMurOpen] = useState(false); // pop-up Mur/Toiture : ouverte uniquement au clic sur le plan
+  const [plancherPopOpen, setPlancherPopOpen] = useState(false); // pop-up Plancher : ouverte au clic sur le plancher en façade
   const [flash, setFlash] = useState("");
   const [caracOpen, setCaracOpen] = useState(false); // zone « Caractéristiques techniques » fermée par défaut
   const [chiffrageOpen, setChiffrageOpen] = useState(false); // détail par mur du chiffrage, fermé par défaut
@@ -2723,7 +2793,7 @@ export default function App() {
               }} />
             </div>
           <div className="panel-canvas" style={{ height: panels.elev.h }}>
-            <Elevation d={d} murs={env.murs} planchers={env.planchers} surfaces={env.facades} interieurs={env.interieurs} couvertures={couvListOf(env)} charpente={charpenteSel} toiture={toitureDef} toitType={toitType} faceKey={selectedFace} faceData={face} dims={dmSel} insts={elevInsts.list} bbox={elevInsts.b} depM={depToitM} w={effW("elev")} h={panels.elev.h} />
+            <Elevation d={d} murs={env.murs} planchers={env.planchers} surfaces={env.facades} interieurs={env.interieurs} couvertures={couvListOf(env)} charpente={charpenteSel} toiture={toitureDef} toitType={toitType} faceKey={selectedFace} faceData={face} dims={dmSel} insts={elevInsts.list} bbox={elevInsts.b} depM={depToitM} w={effW("elev")} h={panels.elev.h} onSelectPlancher={(ev) => { setPlancherPopOpen(true); if (ev) setPopPos({ x: ev.clientX, y: ev.clientY }); }} />
           </div>
           <div className="panel-resize" onPointerDown={(e) => startResize(e, "elev", true, false)} title="Agrandir/réduire en hauteur (zoom)" />
         </div>
@@ -2888,6 +2958,35 @@ export default function App() {
         </div>
       </div>
 
+      {plancherPopOpen && (
+      <div className="modal-overlay" onClick={() => setPlancherPopOpen(false)}>
+      <div className="card modal" style={popStyle} onClick={(e) => e.stopPropagation()}>
+        <div className="card-title modal-title" onPointerDown={startPopDrag} style={{ cursor: popPos ? "grab" : undefined, touchAction: "none" }}>
+          <span>Plancher</span>
+          <button type="button" className="icon-btn danger" onClick={() => setPlancherPopOpen(false)} title="Fermer" aria-label="Fermer">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+          </button>
+        </div>
+        <div className="card-body modal-body">
+          <p className="config-hint" style={{ marginTop: 0 }}>
+            Revêtements du plancher (cliquez sur le plancher d'une façade pour ouvrir cette fenêtre) :
+            le dessus reprend un revêtement du catalogue « Intérieur », les chants un revêtement du catalogue « Extérieur ».
+          </p>
+          <div className="fields-grid">
+            <RevetSelect label="Revêtement supérieur (catalogue « Intérieur »)"
+              value={intIdOf(env, d.revetementPlancher)}
+              onChange={(v) => setD((prev) => ({ ...prev, revetementPlancher: v }))}
+              options={intListOf(env)} />
+            <RevetSelect label="Revêtement des chants (catalogue « Extérieur »)"
+              value={d.revetementChantPlancher ?? murSel?.surface ?? ""}
+              onChange={(v) => setD((prev) => ({ ...prev, revetementChantPlancher: v }))}
+              options={env.facades}
+              defaultLabel={`Par défaut — ${surfaceNom(d.revetementChantPlancher ?? murSel?.surface ?? "")}`} />
+          </div>
+        </div>
+      </div>
+      </div>
+      )}
       {murOpen && (
       <div className="modal-overlay" onClick={() => setMurOpen(false)}>
       <div className="card modal" style={popStyle} onClick={(e) => e.stopPropagation()}>
@@ -2932,28 +3031,16 @@ export default function App() {
           <div className="fields-grid">
             {!selIsToiture && (
             <>
-            <Field label="Revêtement extérieur">
-              <select
-                value={face.surface ?? murSel?.surface ?? ""}
-                onChange={(e) => setFace(planSel, { surface: e.target.value || null })}
-              >
-                <option value="">Par défaut — {surfaceNom(face.surface ?? murSel?.surface ?? "")}</option>
-                {env.facades.map((s) => (
-                  <option key={s.id} value={s.id}>{s.nom}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Revêtement intérieur">
-              <select
-                value={face.surfaceInt ?? ""}
-                onChange={(e) => setFace(planSel, { surfaceInt: e.target.value || null })}
-              >
-                <option value="">Par défaut — {intNom(intIdOf(env, face.surfaceInt))}</option>
-                {intListOf(env).map((s) => (
-                  <option key={s.id} value={s.id}>{s.nom}</option>
-                ))}
-              </select>
-            </Field>
+            <RevetSelect label="Revêtement extérieur"
+              value={face.surface ?? murSel?.surface ?? ""}
+              onChange={(v) => setFace(planSel, { surface: v })}
+              options={env.facades}
+              defaultLabel={`Par défaut — ${surfaceNom(face.surface ?? murSel?.surface ?? "")}`} />
+            <RevetSelect label="Revêtement intérieur"
+              value={face.surfaceInt ?? ""}
+              onChange={(v) => setFace(planSel, { surfaceInt: v })}
+              options={intListOf(env)}
+              defaultLabel={`Par défaut — ${intNom(intIdOf(env, face.surfaceInt))}`} />
             </>
             )}
             {selIsToiture && (
@@ -2963,40 +3050,28 @@ export default function App() {
                 if (!p) return <p className="config-hint">Cliquez un pent de toiture sur le plan pour choisir ses revêtements.</p>;
                 return (
                   <div className="fields-grid">
-                    <Field label={`Revêtement toiture — pent ${p.numero} (module ${p.instIndex}, ${p.versant}) — ${fmtM2(p.area)}`}>
-                      <select
-                        value={d.surfacesToiture?.[p.instId]?.[p.versant] ?? ""}
-                        onChange={(e) => setD((prev) => ({
-                          ...prev,
-                          surfacesToiture: {
-                            ...(prev.surfacesToiture || {}),
-                            [p.instId]: { ...(prev.surfacesToiture?.[p.instId] || {}), [p.versant]: e.target.value || null },
-                          },
-                        }))}
-                      >
-                        <option value="">Par défaut — {couvNom(couvIdOf(env, null, toitureDef.surface))}</option>
-                        {couvListOf(env).map((s) => (
-                          <option key={s.id} value={s.id}>{s.nom}</option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label={`Revêtement intérieur (sous-face) — pent ${p.numero}`}>
-                      <select
-                        value={d.surfacesIntToiture?.[p.instId]?.[p.versant] ?? ""}
-                        onChange={(e) => setD((prev) => ({
-                          ...prev,
-                          surfacesIntToiture: {
-                            ...(prev.surfacesIntToiture || {}),
-                            [p.instId]: { ...(prev.surfacesIntToiture?.[p.instId] || {}), [p.versant]: e.target.value || null },
-                          },
-                        }))}
-                      >
-                        <option value="">Par défaut — {intNom(intIdOf(env, d.surfacesIntToiture?.[p.instId]?.[p.versant]))}</option>
-                        {intListOf(env).map((s) => (
-                          <option key={s.id} value={s.id}>{s.nom}</option>
-                        ))}
-                      </select>
-                    </Field>
+                    <RevetSelect label={`Revêtement toiture — pent ${p.numero} (module ${p.instIndex}, ${p.versant}) — ${fmtM2(p.area)}`}
+                      value={d.surfacesToiture?.[p.instId]?.[p.versant] ?? ""}
+                      onChange={(v) => setD((prev) => ({
+                        ...prev,
+                        surfacesToiture: {
+                          ...(prev.surfacesToiture || {}),
+                          [p.instId]: { ...(prev.surfacesToiture?.[p.instId] || {}), [p.versant]: v },
+                        },
+                      }))}
+                      options={couvListOf(env)}
+                      defaultLabel={`Par défaut — ${couvNom(couvIdOf(env, null, toitureDef.surface))}`} />
+                    <RevetSelect label={`Revêtement intérieur (sous-face) — pent ${p.numero}`}
+                      value={d.surfacesIntToiture?.[p.instId]?.[p.versant] ?? ""}
+                      onChange={(v) => setD((prev) => ({
+                        ...prev,
+                        surfacesIntToiture: {
+                          ...(prev.surfacesIntToiture || {}),
+                          [p.instId]: { ...(prev.surfacesIntToiture?.[p.instId] || {}), [p.versant]: v },
+                        },
+                      }))}
+                      options={intListOf(env)}
+                      defaultLabel={`Par défaut — ${intNom(intIdOf(env, d.surfacesIntToiture?.[p.instId]?.[p.versant]))}`} />
                   </div>
                 );
               })()
@@ -3238,20 +3313,37 @@ export default function App() {
               Détail par mur
             </p>
             {chiffrageOpen && surfaces.mursDetail.map((m) => (
-              <div className="chiffrage-line" key={m.key}>
-                <span className="chiffrage-left"><span className="chiffrage-k">{m.label}</span><span className="chiffrage-surf">ext. {fmtM2(m.area)} · int. {fmtM2(m.areaInt)}</span></span>
-                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(m.amount)} HT</span></span>
+              <div className="chiffrage-item" key={m.key}>
+                <div className="chiffrage-line">
+                  <span className="chiffrage-left"><span className="chiffrage-k">{m.label}</span><span className="chiffrage-surf">ext. {fmtM2(m.area)} · int. {fmtM2(m.areaInt)}</span></span>
+                  <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(m.amount)} HT</span></span>
+                </div>
+                <div className="chiffrage-sub"><span>{murSel?.nom || "Mur"} (isolation) — {fmtM2(m.area)}</span><span>{fmtEur(m.amountMur)} HT</span></div>
+                {m.surfaceId && (
+                  <div className="chiffrage-sub"><span>{surfaceNom(m.surfaceId)} (ext.) — {fmtM2(m.area)}</span><span>{fmtEur(m.amountExt)} HT</span></div>
+                )}
+                {m.surfaceIntId && (
+                  <div className="chiffrage-sub"><span>{intNom(m.surfaceIntId)} (int.) — {fmtM2(m.areaInt)}</span><span>{fmtEur(m.amountInt)} HT</span></div>
+                )}
               </div>
             ))}
-            <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Plancher</span><span className="chiffrage-surf">{fmtM2(surfaces.plancher)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.plancher)} HT</span></div>
+            <div className="chiffrage-item">
+              <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Plancher</span><span className="chiffrage-surf">{fmtM2(surfaces.plancher)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.plancher)} HT</span></div>
+            </div>
             <p className="section-label carac-toggle" onClick={() => setPlancherOpen((o) => !o)}>
               <span className={"carac-arrow" + (plancherOpen ? " open" : "")}></span>
               Détail par module
             </p>
             {plancherOpen && (tarifs.plancherDetail || []).map((p) => (
-              <div className="chiffrage-line" key={p.key}>
-                <span className="chiffrage-left"><span className="chiffrage-k">{p.label}</span><span className="chiffrage-surf">{fmtM2(p.area)}</span></span>
-                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amount)} HT</span></span>
+              <div className="chiffrage-item" key={p.key}>
+                <div className="chiffrage-line">
+                  <span className="chiffrage-left"><span className="chiffrage-k">{p.label}</span><span className="chiffrage-surf">{fmtM2(p.area)}</span></span>
+                  <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amount)} HT</span></span>
+                </div>
+                <div className="chiffrage-sub"><span>{plancherSel?.nom || "Plancher"} — {fmtM2(p.area)}</span><span>{fmtEur(p.amountBase)} HT</span></div>
+                {tarifs.plancherHautId && (
+                  <div className="chiffrage-sub"><span>{intNom(tarifs.plancherHautId)} (dessus) — {fmtM2(p.area)}</span><span>{fmtEur(p.amountHaut)} HT</span></div>
+                )}
               </div>
             ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Complexe de toiture</span><span className="chiffrage-surf">{fmtM2(surfaces.toitureBase)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.toiture)} HT</span></div>
@@ -3260,9 +3352,15 @@ export default function App() {
               Détail par pent
             </p>
             {pentsBaseOpen && (tarifs.pents || []).map((p) => (
-              <div className="chiffrage-line" key={"b" + p.numero}>
-                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">int. {fmtM2(p.areaBaseInt ?? p.areaBase ?? p.area)}</span></span>
-                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amountBase)} HT</span></span>
+              <div className="chiffrage-item" key={"b" + p.numero}>
+                <div className="chiffrage-line">
+                  <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">int. {fmtM2(p.areaBaseInt ?? p.areaBase ?? p.area)}</span></span>
+                  <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amountBase)} HT</span></span>
+                </div>
+                <div className="chiffrage-sub"><span>{toitureDef.nom} (structure) — {fmtM2(p.areaBase ?? p.area)}</span><span>{fmtEur(p.amountBaseStruct)} HT</span></div>
+                {p.surfaceIntId && (
+                  <div className="chiffrage-sub"><span>{intNom(p.surfaceIntId)} (sous-face) — {fmtM2(p.areaBaseInt ?? p.areaBase ?? p.area)}</span><span>{fmtEur(p.amountBaseInt)} HT</span></div>
+                )}
               </div>
             ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Couverture</span><span className="chiffrage-surf">{fmtM2(surfaces.toiture)}</span></span><span className="chiffrage-v">{fmtEur(tarifs.couverture)} HT</span></div>
@@ -3271,9 +3369,11 @@ export default function App() {
               Détail par pent
             </p>
             {pentsOpen && (tarifs.pents || []).map((p) => (
-              <div className="chiffrage-line" key={"c" + p.numero}>
-                <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{fmtM2(p.area)}</span></span>
-                <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amount)} HT</span></span>
+              <div className="chiffrage-item" key={"c" + p.numero}>
+                <div className="chiffrage-line">
+                  <span className="chiffrage-left"><span className="chiffrage-k">Pent {p.numero} (module {p.instIndex})</span><span className="chiffrage-surf">{p.surfaceId ? `${couvNom(p.surfaceId)} — ` : ""}{fmtM2(p.area)}</span></span>
+                  <span className="chiffrage-right"><span className="chiffrage-v">{fmtEur(p.amount)} HT</span></span>
+                </div>
               </div>
             ))}
             <div className="chiffrage-line"><span className="chiffrage-left"><span className="chiffrage-k">Ouvrants ({surfaces.ouvrants})</span></span><span className="chiffrage-v">{fmtEur(tarifs.menuiseries)} HT</span></div>
