@@ -23,6 +23,11 @@ define('ARCHICAD_DATA_DIR', __DIR__ . '/data');
 // URL publique du site (liens absolus dans les e-mails de notification)
 define('ARCHICAD_SITE_URL', 'https://configurateur.baracca.fr');
 
+// Jeton partagé du collecteur de métriques multi-sites (php/stats_collect.php) :
+// les autres sites baracca.fr (invest, blog, dev) y envoient leurs événements
+// en POST serveur -> serveur avec ce jeton (identique dans leur config.php).
+define('ARCHICAD_STATS_COLLECT_TOKEN', '9db708b595a5a8002de69d8b464edc1bea83878f');
+
 // Limitation de débit des connexions à l'espace client (par adresse IP)
 define('ARCHICAD_LOGIN_MAX_ATTEMPTS', 5);     // échecs autorisés...
 define('ARCHICAD_LOGIN_WINDOW_SECONDS', 900);  // ...dans une fenêtre de 15 minutes...

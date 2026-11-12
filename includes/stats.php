@@ -21,7 +21,7 @@ function archicad_metriques_file(): string
     return ARCHICAD_DATA_DIR . '/metriques.jsonl';
 }
 
-// Événement de connexion (appelé au login)
+// Événement de connexion (appelé au login) — tagué site « configurateur »
 function archicad_stats_log_login(string $userId): void
 {
     if (!is_dir(ARCHICAD_DATA_DIR)) {
@@ -29,14 +29,28 @@ function archicad_stats_log_login(string $userId): void
     }
     $file = archicad_metriques_file();
     $lines = is_file($file) ? file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
-    $lines[] = json_encode(['ts' => time(), 'user' => $userId], JSON_UNESCAPED_UNICODE);
-    if (count($lines) > 5000) {
-        $lines = array_slice($lines, -5000);
+    $lines[] = json_encode(['ts' => time(), 'site' => 'configurateur', 'event' => 'login', 'user' => $userId], JSON_UNESCAPED_UNICODE);
+    if (count($lines) > 20000) {
+        $lines = array_slice($lines, -20000);
     }
     file_put_contents($file, implode("\n", $lines) . "\n", LOCK_EX);
 }
 
+// Horodatages des connexions (event « login », tous sites confondus)
 function archicad_stats_login_events(): array
+{
+    $out = [];
+    foreach (archicad_stats_events() as $e) {
+        if (($e['event'] ?? 'login') === 'login') {
+            $out[] = (int) $e['ts'];
+        }
+    }
+    return $out;
+}
+
+// Tous les événements métriques, tous sites confondus (data/metriques.jsonl).
+// Les lignes historiques sans site/event sont rattachées à configurateur/login.
+function archicad_stats_events(): array
 {
     $file = archicad_metriques_file();
     if (!is_file($file)) {
@@ -45,9 +59,12 @@ function archicad_stats_login_events(): array
     $out = [];
     foreach (file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
         $e = json_decode($line, true);
-        if (is_array($e) && isset($e['ts'])) {
-            $out[] = (int) $e['ts'];
+        if (!is_array($e) || !isset($e['ts'])) {
+            continue;
         }
+        $e['site'] = (string) ($e['site'] ?? 'configurateur');
+        $e['event'] = (string) ($e['event'] ?? 'login');
+        $out[] = $e;
     }
     return $out;
 }
@@ -224,10 +241,34 @@ function archicad_stats_collect(): array
         }
     }
 
-    // heatmap connexions : 7 jours (lun..dim) x 24 h
+    // heatmap connexions : 7 jours (lun..dim) x 24 h — connexions de TOUS les sites
     $grid = array_fill(0, 7, array_fill(0, 24, 0));
     foreach (archicad_stats_login_events() as $ts) {
         $grid[((int) date('w', $ts) + 6) % 7][(int) date('G', $ts)]++;
+    }
+
+    // Métriques multi-sites : agrégation par site des événements remontés
+    // au collecteur central (data/metriques.jsonl, champ site) — ex. invest, blog
+    $sites = [];
+    foreach (archicad_stats_events() as $e) {
+        $site = (string) ($e['site'] ?? 'configurateur');
+        $ev = (string) ($e['event'] ?? 'login');
+        $ts = (int) $e['ts'];
+        if (!isset($sites[$site])) {
+            $sites[$site] = ['total' => 0, 'events' => [], 'users' => [], 'grid' => array_fill(0, 7, array_fill(0, 24, 0))];
+        }
+        $sites[$site]['total']++;
+        $sites[$site]['events'][$ev] = ($sites[$site]['events'][$ev] ?? 0) + 1;
+        if (!empty($e['user'])) {
+            $sites[$site]['users'][$e['user']] = true;
+        }
+        if ($ev === 'login') {
+            $sites[$site]['grid'][((int) date('w', $ts) + 6) % 7][(int) date('G', $ts)]++;
+        }
+    }
+    ksort($sites);
+    foreach ($sites as $site => $s) {
+        arsort($sites[$site]['events']);
     }
 
     // libellés catalogue (couvertures : repli sur l'ancien catalogue « surfaces » pour les vieux id)
@@ -258,6 +299,7 @@ function archicad_stats_collect(): array
         'userNames' => $userNames,
         'conversion' => $conversion,
         'grid' => $grid,
+        'sites' => $sites, // métriques multi-sites agrégées par site (voir php/stats_collect.php)
         'top' => [
             'modules' => $labeled('modules', $agg['modules']),
             'formes' => $labeled('formes', $agg['formes']),

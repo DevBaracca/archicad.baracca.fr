@@ -345,6 +345,28 @@ clé `module` et ses sous-clés `dimensions`, `plancher`, `toiture`,
 `murs`. Le détail des tarifs figure dans `metriques.tarif` (module, mur,
 plancher, façade, menuiseries, total) — ajout rétro-compatible.
 
+## Métriques multi-sites (tableau de bord)
+
+Le tableau de bord (`admin/index.php`) agrège aussi les événements des autres
+sites baracca.fr. Chaque site envoie ses événements en POST serveur -> serveur
+au collecteur central `php/stats_collect.php` de ce site, protégé par le jeton
+partagé `ARCHICAD_STATS_COLLECT_TOKEN` (identique dans le `config.php` de chaque
+site) :
+
+```
+POST https://configurateur.baracca.fr/php/stats_collect.php
+{"token": "…", "site": "invest", "event": "login", "user": "…", "detail": "…"}
+```
+
+Sites autorisés : `configurateur`, `invest`, `blog`, `dev`. Événements :
+`login`, `vue`, `telechargement`, `contact`, `newsletter`, `demande`,
+`config`, `soumission`. Les événements sont ajoutés à `data/metriques.jsonl`
+(champs `site` / `event` / `user` / `detail`, plafond 20 000 lignes) puis
+agrégés par site dans `includes/stats.php` (`archicad_stats_collect()` →
+clé `sites`) et affichés dans la carte « Métriques des sites baracca.fr ».
+Côté émetteur, `includes/stats_client.php` (invest, blog) envoie l'événement
+sans jamais bloquer la page (timeout 2 s, erreurs ignorées).
+
 ## Sécurité iframe (recommandé)
 
 Sur le serveur qui héberge `configurateur/`, autorisez l'affichage en iframe
