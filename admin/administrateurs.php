@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Back-office (archicad.baracca.fr)
+ * Baracca - Back-office (configurateur.baracca.fr)
  * Gestion des administrateurs du configurateur (data/admins.json) :
  * liste, ajout d'un administrateur, changement de mot de passe, suppression
  * (impossible de supprimer le dernier administrateur).

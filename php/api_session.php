@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * API (même origine) : état de la session client, consommée par l'application
  * React du configurateur (servie sous /configurateur/, intégrée par iframe).
  * N'expose jamais le hash du mot de passe.

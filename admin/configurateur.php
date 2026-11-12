@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Back-office (archicad.baracca.fr)
+ * Baracca - Back-office (configurateur.baracca.fr)
  * Gestion des catalogues du configurateur : menuiseries (baies vitrées,
  * fenêtres, portes — avec visuel et référence Archicad), modèles de modules
  * (géométrie prédéfinie uniquement), isolations (type de mur + plancher +
@@ -88,6 +88,18 @@ function cat_hex(array $rgb): string
 function cat_env_field(array $editEnv, string $sous, string $key, string $default = ''): string
 {
     return htmlspecialchars((string) (($editEnv['sous'] === $sous && $editEnv['item']) ? ($editEnv['item'][$key] ?? $default) : $default));
+}
+
+// Options <option> d'une liste déroulante de catalogue, élément $current présélectionné
+function cat_select_options(array $items, string $current): string
+{
+    $h = '';
+    foreach ($items as $it) {
+        $id = (string) ($it['id'] ?? '');
+        $h .= '<option value="' . htmlspecialchars($id) . '"' . ($id === $current ? ' selected' : '') . '>'
+            . htmlspecialchars((string) ($it['nom'] ?? $id)) . '</option>';
+    }
+    return $h;
 }
 
 // Vignette du visuel d'un élément de catalogue ('—' si aucun)
@@ -681,19 +693,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             cat_redirect($sous, 'invalid');
         }
         $fields = ['nom' => $nom, 'tarif' => $tarif];
-        // Référence de surface (catalogue surfaces.json)
-        $facadeList = archicad_load_catalogue('surfaces');
-        $surfaceRef = function (string $posted) use ($facadeList): string {
-            $sid = (string) $posted;
-            if ($sid === '' || archicad_catalogue_find('surfaces', $sid) === null) {
-                $sid = (string) ($facadeList[0]['id'] ?? '');
+        // Référence de revêtement (catalogues surfaces / interieurs / couvertures) :
+        // id valide du catalogue, sinon son premier élément
+        $refOf = function (string $kind, string $posted): string {
+            $list = archicad_load_catalogue($kind);
+            $id = (string) $posted;
+            if ($id === '' || archicad_catalogue_find($kind, $id) === null) {
+                $id = (string) ($list[0]['id'] ?? '');
             }
-            return $sid;
+            return $id;
         };
         if ($sous === 'murs' || $sous === 'toitures') {
             // référence Archicad ('' = aucun) — les surfaces n'en ont pas
             $fields['favori'] = trim((string) ($_POST['favori'] ?? ''));
-            $fields['surface'] = $surfaceRef((string) ($_POST['surface'] ?? ''));
+            $fields['surface'] = $refOf('surfaces', (string) ($_POST['surface'] ?? ''));
             // Saisie en cm (précision mm) — stockage en m
             $epaisseur = round(cat_num('epaisseur') / 100, 3);
             if ($epaisseur <= 0) {
@@ -705,9 +718,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 max(0, min(255, (int) round(cat_num('g')))),
                 max(0, min(255, (int) round(cat_num('b')))),
             ];
+            if ($sous === 'murs') {
+                // revêtement INTÉRIEUR par défaut du mur (catalogue interieurs.json)
+                $fields['interieur'] = $refOf('interieurs', (string) ($_POST['interieur'] ?? ''));
+            }
+            if ($sous === 'toitures') {
+                // revêtements par défaut du complexe de toiture, appliqués à chaque
+                // pent côté client : sous-face (interieurs.json) + couverture (couvertures.json)
+                $fields['interieur'] = $refOf('interieurs', (string) ($_POST['interieur'] ?? ''));
+                $fields['couverture'] = $refOf('couvertures', (string) ($_POST['couverture'] ?? ''));
+            }
         }
         if ($sous === 'planchers') {
             $fields['favori'] = trim((string) ($_POST['favori'] ?? ''));
+            // revêtements par défaut du plancher, appliqués côté client :
+            // surface supérieure (interieurs.json) et chants (surfaces.json)
+            $fields['revetement_sup'] = $refOf('interieurs', (string) ($_POST['revetement_sup'] ?? ''));
+            $fields['revetement_chants'] = $refOf('surfaces', (string) ($_POST['revetement_chants'] ?? ''));
             // Saisie en cm (précision mm) — stockage en m
             $epaisseur = round(cat_num('epaisseur') / 100, 3);
             if ($epaisseur <= 0) {
@@ -1954,7 +1981,7 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
     <div class="admin-card">
       <?php if ($section === 'murs'): ?>
       <h2>Murs porteurs (<?= count($murs) ?>) <?= cat_btn_add('configurateur.php?section=murs&new=1', 'Ajouter un type de mur') ?></h2>
-      <p class="admin-hint">Types de mur porteur : épaisseur, surface (visuel utilisé en élévation), couleur, référence Archicad, coût au m² — liés aux modules.</p>
+      <p class="admin-hint">Types de mur porteur : épaisseur, couleur, revêtements par défaut (extérieur « Extérieur » / intérieur « Intérieur », appliqués côté client), référence Archicad, coût au m² — liés aux modules.</p>
       <?php if ($murs === []): ?>
         <p class="admin-hint">Aucun type de mur dans le catalogue pour le moment.</p>
       <?php else: ?>
@@ -1981,7 +2008,7 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
       <?php endif; ?>
       <?php elseif ($section === 'planchers'): ?>
       <h2>Planchers (<?= count($planchers) ?>) <?= cat_btn_add('configurateur.php?section=planchers&new=1', 'Ajouter un plancher') ?></h2>
-      <p class="admin-hint">Types de plancher : épaisseur (dessinée en élévation, +21,7 cm au-delà de la ligne directrice des murs), référence Archicad, coût au m² — liés aux modules.</p>
+      <p class="admin-hint">Types de plancher : épaisseur (dessinée en élévation, +21,7 cm au-delà de la ligne directrice des murs), revêtements par défaut (supérieur « Intérieur » / chants « Extérieur », appliqués côté client), référence Archicad, coût au m² — liés aux modules.</p>
       <?php if ($planchers === []): ?>
         <p class="admin-hint">Aucun plancher dans le catalogue pour le moment.</p>
       <?php else: ?>
@@ -2007,7 +2034,7 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
       <?php endif; ?>
       <?php else: ?>
       <h2>Complexe de toiture (<?= count($toitures) ?>) <?= cat_btn_add('configurateur.php?section=toitures&new=1', 'Ajouter un type de toiture') ?></h2>
-      <p class="admin-hint">Types de toiture : épaisseur (bande au-dessus de la ligne directrice en élévation), surface, couleur, référence Archicad, coût au m². La géométrie (monopente / deux pentes / quatre pentes) se règle dans l'onglet « Formes ».</p>
+      <p class="admin-hint">Types de toiture : épaisseur (bande au-dessus de la ligne directrice en élévation), couleur, revêtements par défaut (sous-face « Intérieur » / couverture « Toiture », appliqués à chaque pent côté client), référence Archicad, coût au m². La géométrie (monopente / deux pentes / quatre pentes) se règle dans l'onglet « Formes ».</p>
       <?php if ($toitures === []): ?>
         <p class="admin-hint">Aucun type de toiture dans le catalogue pour le moment.</p>
       <?php else: ?>
@@ -2088,6 +2115,18 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         <hr class="admin-sep">
         <div class="modal-row">
           <div class="admin-form-row">
+            <label for="mur-surface">Revêtement extérieur par défaut (catalogue « Extérieur »)</label>
+            <select id="mur-surface" name="surface"><?= cat_select_options($facades, (string) ($editEnv['item']['surface'] ?? ($facades[0]['id'] ?? ''))) ?></select>
+          </div>
+          <div class="admin-form-row">
+            <label for="mur-interieur">Revêtement intérieur par défaut (catalogue « Intérieur »)</label>
+            <select id="mur-interieur" name="interieur"><?= cat_select_options($interieurs, (string) ($editEnv['item']['interieur'] ?? ($interieurs[0]['id'] ?? ''))) ?></select>
+          </div>
+        </div>
+        <p class="admin-hint">Ces revêtements sont présélectionnés par défaut dans le configurateur client (le client peut les changer mur par mur).</p>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
             <label for="mur-favori">Référence Archicad</label>
             <input type="text" id="mur-favori" name="favori" value="<?= cat_env_field($editEnv, 'murs', 'favori') ?>" placeholder="Nom de la référence Archicad (ex. Baracca — Mur CLT), vide = aucune">
           </div>
@@ -2138,6 +2177,18 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
             <input type="number" id="pl-tarif" name="tarif" step="0.01" min="0" value="<?= cat_env_field($editEnv, 'planchers', 'tarif', '0') ?>">
           </div>
         </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="pl-rev-sup">Revêtement supérieur par défaut (catalogue « Intérieur »)</label>
+            <select id="pl-rev-sup" name="revetement_sup"><?= cat_select_options($interieurs, (string) ($editEnv['item']['revetement_sup'] ?? ($interieurs[0]['id'] ?? ''))) ?></select>
+          </div>
+          <div class="admin-form-row">
+            <label for="pl-rev-chants">Revêtement des chants par défaut (catalogue « Extérieur »)</label>
+            <select id="pl-rev-chants" name="revetement_chants"><?= cat_select_options($facades, (string) ($editEnv['item']['revetement_chants'] ?? ($facades[0]['id'] ?? ''))) ?></select>
+          </div>
+        </div>
+        <p class="admin-hint">Ces revêtements sont présélectionnés par défaut dans le configurateur client.</p>
         <hr class="admin-sep">
         <div class="modal-row">
           <div class="admin-form-row">
@@ -2203,6 +2254,18 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
             <input type="number" id="to-tarif" name="tarif" step="0.01" min="0" value="<?= cat_env_field($editEnv, 'toitures', 'tarif', '0') ?>">
           </div>
         </div>
+        <hr class="admin-sep">
+        <div class="modal-row">
+          <div class="admin-form-row">
+            <label for="to-interieur">Revêtement intérieur par défaut — sous-face (catalogue « Intérieur »)</label>
+            <select id="to-interieur" name="interieur"><?= cat_select_options($interieurs, (string) ($editEnv['item']['interieur'] ?? ($interieurs[0]['id'] ?? ''))) ?></select>
+          </div>
+          <div class="admin-form-row">
+            <label for="to-couverture">Couverture de toiture par défaut (catalogue « Toiture »)</label>
+            <select id="to-couverture" name="couverture"><?= cat_select_options($couvertures, (string) ($editEnv['item']['couverture'] ?? ($couvertures[0]['id'] ?? ''))) ?></select>
+          </div>
+        </div>
+        <p class="admin-hint">Ces revêtements sont appliqués par défaut à chaque pent de toiture dans le configurateur client.</p>
         <hr class="admin-sep">
         <div class="modal-row">
           <div class="admin-form-row">

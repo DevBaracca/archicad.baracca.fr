@@ -189,11 +189,13 @@ export const couvIdOf = (env, id, fallback) => {
   return l[0]?.id ?? id ?? "";
 };
 // id de revêtement intérieur effectif : valeur enregistrée si valide, sinon le
-// premier du catalogue « Intérieur » ("" si le catalogue est vide)
-export const intIdOf = (env, id) => {
+// repli (revêtement intérieur par défaut de l'élément : mur, plancher, toiture),
+// sinon le premier du catalogue « Intérieur » ("" si le catalogue est vide)
+export const intIdOf = (env, id, fallback) => {
   const l = intListOf(env);
   if (!l.length) return "";
   if (id && l.some((c) => c.id === id)) return id;
+  if (fallback && l.some((c) => c.id === fallback)) return fallback;
   return l[0].id;
 };
 
@@ -266,8 +268,8 @@ function pentsOf(d, env) {
         numero: n, instId: inst.id, instIndex: idx + 1, versant: v, area, areaBase,
         areaBaseInt: toitAreaInt(dmInt, pente1Of(d), pente2Of(d), toitType, v, keys.length), // sous-face intérieure : - 2 épaisseurs de mur
         // couverture masquée pour ce module -> pas de revêtement de toiture créé
-        surfaceId: visOfInst(d, env, inst).couverture ? couvIdOf(env, d.surfacesToiture?.[inst.id]?.[v], toiture?.surface) : "",
-        surfaceIntId: intIdOf(env, d.surfacesIntToiture?.[inst.id]?.[v]), // revêtement intérieur (sous-face)
+        surfaceId: visOfInst(d, env, inst).couverture ? couvIdOf(env, d.surfacesToiture?.[inst.id]?.[v], toiture?.couverture ?? toiture?.surface) : "",
+        surfaceIntId: intIdOf(env, d.surfacesIntToiture?.[inst.id]?.[v], toiture?.interieur), // revêtement intérieur (sous-face)
       });
     }
   });
@@ -547,7 +549,7 @@ function mursChiffrage(d, env) {
     area -= ouvArea;
     areaInt -= ouvArea;
     const surfaceId = e.a?.surface ?? murDef?.surface ?? "";
-    const surfaceIntId = intIdOf(env, e.a?.surfaceInt); // revêtement intérieur du mur
+    const surfaceIntId = intIdOf(env, e.a?.surfaceInt, murDef?.interieur); // revêtement intérieur du mur (défaut = type de mur)
     const sd = env.facades.find((f) => f.id === surfaceId);
     const sdInt = intListOf(env).find((f) => f.id === surfaceIntId);
     // mur + revêtement ext sur la surface EXTÉRIEURE (ligne directrice + épaisseurs) ;
@@ -701,8 +703,8 @@ function tarifTotal(d, env) {
   const fenetresToitAmount = fenetresToitDetail.reduce((s, f) => s + f.amount, 0);
   const moduleBrut = module ? +module.tarif || 0 : 0;
   // plancher : base + revêtement supérieur (Intérieur) sur la surface + revêtement des chants (Extérieur)
-  const sdPlancherHaut = intListOf(env).find((f) => f.id === intIdOf(env, d.revetementPlancher));
-  const sdChant = env.facades.find((f) => f.id === (d.revetementChantPlancher ?? mur?.surface));
+  const sdPlancherHaut = intListOf(env).find((f) => f.id === intIdOf(env, d.revetementPlancher, plancher?.revetement_sup));
+  const sdChant = env.facades.find((f) => f.id === (d.revetementChantPlancher ?? plancher?.revetement_chants ?? mur?.surface));
   const plancherBase = eurM2(plancher) * margeOf(env, "planchers") * S.plancher;
   const plancherHautAmount = eurM2(sdPlancherHaut) * margeOf(env, "interieurs") * S.plancher;
   const plancherChantAmount = eurM2(sdChant) * margeOf(env, "surfaces") * (S.plancherChant || 0);
@@ -819,7 +821,7 @@ function buildExport(d, env) {
     epaisseur: murDef.epaisseur,
     materiau: murDef.materiau ?? surfaceDef.nom,
     surface: (env.facades.find((f) => f.id === (face.surface ?? murDef.surface)) || env.facades[0]).nom, // revêtement extérieur choisi pour ce mur
-    surfaceInterieur: (intListOf(env).find((i) => i.id === intIdOf(env, face.surfaceInt)) || {}).nom ?? "", // revêtement intérieur du mur
+    surfaceInterieur: (intListOf(env).find((i) => i.id === intIdOf(env, face.surfaceInt, murDef.interieur)) || {}).nom ?? "", // revêtement intérieur du mur
     favori: murDef.favori ?? "", // favori Archicad pour ce mur
     longueur: murLongueur(d, f.key),
     hauteur: d.hauteur,
@@ -1351,6 +1353,7 @@ function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, char
   const Lm = horiz ? bb.maxX - bb.minX : bb.maxY - bb.minY;
   const hMax = Math.max(...segs.map((x) => x.dm.hauteur));
   const murDef = murs.find((m) => m.id === d.murType) || murs[0];
+  const plancherDef = planchers.find((p) => p.id === d.plancher) || planchers[0];
   const epP = epaisseurPlancher(d, planchers);
   const epToit = +(toiture.epaisseur ?? 0.30);   // épaisseur de la toiture (m)
   const toitRgb = toiture.rgb || [120, 113, 108];
@@ -1383,14 +1386,14 @@ function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, char
   const surfaceOf = (face) => surfaces.find((s) => s.id === (face?.surface ?? murDef.surface)) || surfaces[0];
   // segment traversant (côté opposé vu derrière une charpente) : revêtement INTÉRIEUR
   const sdOf = (seg) => seg.traversant
-    ? ((interieurs || []).find((x) => x.id === seg.face?.surfaceInt) || null)
+    ? ((interieurs || []).find((x) => x.id === (seg.face?.surfaceInt ?? murDef?.interieur)) || null)
     : surfaceOf(seg.face);
   // visuel de couverture du pent visible sur cette façade (catalogue « Toiture »)
   const couvImgOfSeg = (seg) => {
     if (!horiz) return ""; // vue de pignon : pas de bande de toit remplie
     const list = couvertures?.length ? couvertures : surfaces;
     const raw = d.surfacesToiture?.[seg.inst?.id ?? "m0"]?.[faceKey];
-    const fb = toiture?.surface;
+    const fb = toiture?.couverture ?? toiture?.surface;
     const cid = raw && list.some((c) => c.id === raw) ? raw : (fb && list.some((c) => c.id === fb) ? fb : list[0]?.id);
     return list.find((c) => c.id === cid)?.image || "";
   };
@@ -1523,7 +1526,7 @@ function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, char
           </pattern>
         )}
         {(() => {
-          const chantImg = surfaces.find((f) => f.id === (d.revetementChantPlancher ?? murDef?.surface))?.image;
+          const chantImg = surfaces.find((f) => f.id === (d.revetementChantPlancher ?? plancherDef?.revetement_chants ?? murDef?.surface))?.image;
           return chantImg ? (
             <pattern id="chantPatE" width="80" height="80" patternUnits="userSpaceOnUse">
               <image href={chantImg} xlinkHref={chantImg} x="0" y="0" width="80" height="80" preserveAspectRatio="xMidYMid slice" />
@@ -1543,7 +1546,7 @@ function Elevation({ d, murs, planchers, surfaces, interieurs, couvertures, char
       {/* plancher continu : ligne directrice en haut (bas des murs), épaisseur vers le bas,
           bords à 21,7 cm au-delà de la ligne directrice des murs */}
       <rect x={pa} y={yPlancher} width={L + 2 * depPx} height={epPxP}
-        fill={surfaces.find((f) => f.id === (d.revetementChantPlancher ?? murDef?.surface))?.image ? "url(#chantPatE)" : "#e7e5e4"}
+        fill={surfaces.find((f) => f.id === (d.revetementChantPlancher ?? plancherDef?.revetement_chants ?? murDef?.surface))?.image ? "url(#chantPatE)" : "#e7e5e4"}
         stroke="#78716c" style={{ cursor: onSelectPlancher ? "pointer" : undefined }}
         onClick={onSelectPlancher} title="Choisir les revêtements du plancher" />
       <line x1={pa} y1={yPlancher} x2={pb} y2={yPlancher} stroke="#57534e" strokeWidth="1" strokeDasharray="5 4" />
@@ -2974,14 +2977,14 @@ export default function App() {
           </p>
           <div className="fields-grid">
             <RevetSelect label="Revêtement supérieur (catalogue « Intérieur »)"
-              value={intIdOf(env, d.revetementPlancher)}
+              value={intIdOf(env, d.revetementPlancher, plancherSel?.revetement_sup)}
               onChange={(v) => setD((prev) => ({ ...prev, revetementPlancher: v }))}
               options={intListOf(env)} />
             <RevetSelect label="Revêtement des chants (catalogue « Extérieur »)"
-              value={d.revetementChantPlancher ?? murSel?.surface ?? ""}
+              value={d.revetementChantPlancher ?? plancherSel?.revetement_chants ?? murSel?.surface ?? ""}
               onChange={(v) => setD((prev) => ({ ...prev, revetementChantPlancher: v }))}
               options={env.facades}
-              defaultLabel={`Par défaut — ${surfaceNom(d.revetementChantPlancher ?? murSel?.surface ?? "")}`} />
+              defaultLabel={`Par défaut — ${surfaceNom(d.revetementChantPlancher ?? plancherSel?.revetement_chants ?? murSel?.surface ?? "")}`} />
           </div>
         </div>
       </div>
@@ -3040,7 +3043,7 @@ export default function App() {
               value={face.surfaceInt ?? ""}
               onChange={(v) => setFace(planSel, { surfaceInt: v })}
               options={intListOf(env)}
-              defaultLabel={`Par défaut — ${intNom(intIdOf(env, face.surfaceInt))}`} />
+              defaultLabel={`Par défaut — ${intNom(intIdOf(env, face.surfaceInt, murSel?.interieur))}`} />
             </>
             )}
             {selIsToiture && (
@@ -3060,7 +3063,7 @@ export default function App() {
                         },
                       }))}
                       options={couvListOf(env)}
-                      defaultLabel={`Par défaut — ${couvNom(couvIdOf(env, null, toitureDef.surface))}`} />
+                      defaultLabel={`Par défaut — ${couvNom(couvIdOf(env, null, toitureDef.couverture ?? toitureDef.surface))}`} />
                     <RevetSelect label={`Revêtement intérieur (sous-face) — pent ${p.numero}`}
                       value={d.surfacesIntToiture?.[p.instId]?.[p.versant] ?? ""}
                       onChange={(v) => setD((prev) => ({
@@ -3071,7 +3074,7 @@ export default function App() {
                         },
                       }))}
                       options={intListOf(env)}
-                      defaultLabel={`Par défaut — ${intNom(intIdOf(env, d.surfacesIntToiture?.[p.instId]?.[p.versant]))}`} />
+                      defaultLabel={`Par défaut — ${intNom(intIdOf(env, d.surfacesIntToiture?.[p.instId]?.[p.versant], toitureDef.interieur))}`} />
                   </div>
                 );
               })()

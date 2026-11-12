@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Back-office (archicad.baracca.fr)
+ * Baracca - Back-office (configurateur.baracca.fr)
  * Connexion administrateur + tableau de bord
  */
 
@@ -31,7 +31,7 @@ if (!archicad_admin_is_logged_in()) {
     ?>
     <div class="admin-card admin-login">
       <h1>Administration Baracca</h1>
-      <p class="admin-hint">Back-office du site archicad.baracca.fr</p>
+      <p class="admin-hint">Back-office du site configurateur.baracca.fr</p>
       <?php if ($loginError !== ''): ?>
         <p class="admin-message admin-message-error"><?= htmlspecialchars($loginError) ?></p>
       <?php endif; ?>

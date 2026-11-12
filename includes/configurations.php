@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Configurations enregistrées par les clients dans le configurateur
  * (data/configurations.json), pour pouvoir les reprendre ultérieurement.
  */

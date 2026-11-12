@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Back-office (archicad.baracca.fr)
+ * Baracca - Back-office (configurateur.baracca.fr)
  * Fiche détaillée d'un compte client : profil complet, réinitialisation
  * du mot de passe et suppression du compte (et de ses configurations)
  */

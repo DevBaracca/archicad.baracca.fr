@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Back-office (archicad.baracca.fr)
+ * Baracca - Back-office (configurateur.baracca.fr)
  * Téléchargement du JSON d'une soumission (réservé à l'administrateur)
  */
 

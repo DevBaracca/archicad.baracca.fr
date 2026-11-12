@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Back-office (archicad.baracca.fr)
+ * Baracca - Back-office (configurateur.baracca.fr)
  * Métriques d'utilisation du configurateur, calculées depuis data/
  * (users.json, configurations.json, soumissions/, metriques.jsonl)
  * et affichées avec des graphiques dans le tableau de bord.

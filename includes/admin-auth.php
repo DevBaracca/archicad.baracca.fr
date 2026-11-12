@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Back-office : authentification administrateur (session + hash bcrypt),
  * limitation de débit des tentatives de connexion et protection CSRF.
  */

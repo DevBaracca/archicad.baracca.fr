@@ -363,9 +363,9 @@ Header set Content-Security-Policy "frame-ancestors https://votre-site.fr"
 **Important** : `frame-ancestors` compare l'**origine** (schéma + hôte) de la page
 qui intègre l'iframe. La liste doit contenir exactement l'adresse du site déployé —
 s'y déployez sur un sous-domaine, celui-ci doit figurer dans la liste, sinon le
-navigateur bloque l'iframe. Ici le site est servi sur `https://archicad.baracca.fr`,
+navigateur bloque l'iframe. Ici le site est servi sur `https://configurateur.baracca.fr`,
 d'où le `htaccess.txt` :
 
 ```
-Header always set Content-Security-Policy "frame-ancestors https://archicad.baracca.fr https://baracca.fr https://www.baracca.fr"
+Header always set Content-Security-Policy "frame-ancestors https://configurateur.baracca.fr https://baracca.fr https://www.baracca.fr"
 ```

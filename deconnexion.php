@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Espace client : déconnexion
  */
 require_once __DIR__ . '/includes/auth.php';

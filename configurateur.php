@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Page du configurateur — réservée aux clients connectés (compte client requis)
  */
 require_once __DIR__ . '/includes/auth.php';

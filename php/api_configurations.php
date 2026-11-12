@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * API (même origine) : configurations enregistrées par le client connecté,
  * consommée par l'application React du configurateur.
  * Actions (corps JSON en POST) : list, save, get, delete.

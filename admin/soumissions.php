@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Back-office (archicad.baracca.fr)
+ * Baracca - Back-office (configurateur.baracca.fr)
  * Configurations soumises à Baracca via le bouton « Soumettre » du configurateur
  */
 

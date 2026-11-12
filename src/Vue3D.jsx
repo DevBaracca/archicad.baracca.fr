@@ -62,6 +62,7 @@ function buildScene(d, env) {
   const epToitV = epToit / 2; // épaisseur VISUELLE de la dalle en 3D (amincie de moitié ; la sous-face reste à H)
   const dep = Math.max(0, +(d.depassee ?? formeDefOf(d, env)?.depassee ?? epToit * 100) / 100);
   const epP = epaisseurPlancher(d, env.planchers);
+  const plancherDef = env.planchers.find((p) => p.id === d.plancher) || env.planchers[0];
 
   // lumière
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8378, 1.0));
@@ -102,7 +103,7 @@ function buildScene(d, env) {
   };
   // revêtement INTÉRIEUR de la face (catalogue « Intérieur », sous-face des murs côté 3D)
   const intImgOf = (inst, face) => {
-    const sid = intIdOf(env, inst?.murs?.[face]?.surfaceInt);
+    const sid = intIdOf(env, inst?.murs?.[face]?.surfaceInt, murDef?.interieur);
     return intListOf(env).find((f) => f.id === sid)?.image || "";
   };
   const matWithMap = (url, base) => {
@@ -114,7 +115,7 @@ function buildScene(d, env) {
   const couvImgOf = (inst, versant) => {
     const vis = dimsOf(d, env, inst).visibilite;
     if (vis && vis.couverture === false) return ""; // couverture masquée pour ce module
-    const cid = couvIdOf(env, d.surfacesToiture?.[inst.id]?.[versant], toitDef?.surface);
+    const cid = couvIdOf(env, d.surfacesToiture?.[inst.id]?.[versant], toitDef?.couverture ?? toitDef?.surface);
     return couvListOf(env).find((c) => c.id === cid)?.image || "";
   };
 
@@ -184,8 +185,8 @@ function buildScene(d, env) {
     const pN = ep / 2, pS = ep / 2, pE = ep / 2, pW = ep / 2;
     if (vis.plancher) {
       // dessus du plancher = revêtement Intérieur choisi ; chants = revêtement Extérieur choisi
-      const hautImg = intListOf(env).find((f) => f.id === intIdOf(env, d.revetementPlancher))?.image || "";
-      const chantImg = env.facades.find((f) => f.id === (d.revetementChantPlancher ?? murDef?.surface))?.image || "";
+      const hautImg = intListOf(env).find((f) => f.id === intIdOf(env, d.revetementPlancher, plancherDef?.revetement_sup))?.image || "";
+      const chantImg = env.facades.find((f) => f.id === (d.revetementChantPlancher ?? plancherDef?.revetement_chants ?? murDef?.surface))?.image || "";
       const matTop = hautImg ? matWithMap(hautImg, plancherMat) : plancherMat;
       const matSide = chantImg ? matWithMap(chantImg, plancherMat) : plancherMat;
       // BoxGeometry : [+x, -x, +y(dessus), -y, +z, -z]

@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Configuration générale
  */
 
@@ -21,7 +21,7 @@ define('ARCHICAD_ADMIN_PASSWORD_HASH', '$2y$12$ggZv1OhTcaaIzsPnu3tIP.CZy46c8uWl/
 define('ARCHICAD_DATA_DIR', __DIR__ . '/data');
 
 // URL publique du site (liens absolus dans les e-mails de notification)
-define('ARCHICAD_SITE_URL', 'https://archicad.baracca.fr');
+define('ARCHICAD_SITE_URL', 'https://configurateur.baracca.fr');
 
 // Limitation de débit des connexions à l'espace client (par adresse IP)
 define('ARCHICAD_LOGIN_MAX_ATTEMPTS', 5);     // échecs autorisés...

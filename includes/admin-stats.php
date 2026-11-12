@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Back-office (archicad.baracca.fr)
+ * Baracca - Back-office (configurateur.baracca.fr)
  * Section « Statistiques d'utilisation » du tableau de bord.
  * Inclus par admin/index.php (qui a déjà require includes/stats.php).
  */

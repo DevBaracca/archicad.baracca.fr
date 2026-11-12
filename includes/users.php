@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Comptes clients du configurateur (email + mot de passe, hash bcrypt),
  * créés en ligne depuis inscription.php et gérés depuis le back-office
  * (data/users.json).

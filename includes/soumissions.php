@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Configurations soumises à Baracca via le bouton « Soumettre » du
  * configurateur (data/soumissions/, un fichier JSON par soumission),
  * consultables depuis le back-office.

@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * API (même origine) : catalogues du configurateur (menuiseries, modèles de
  * modules, formes de toiture, charpentes, enveloppe), consommée par
  * l'application React. Lecture seule : la gestion des catalogues se fait

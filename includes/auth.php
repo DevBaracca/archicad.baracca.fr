@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Espace client : authentification par compte (email + mot de passe,
  * session PHP + bcrypt), sur le même modèle que l'espace investisseurs
  * du site invest.baracca.fr. Les comptes sont créés en ligne (inscription.php)

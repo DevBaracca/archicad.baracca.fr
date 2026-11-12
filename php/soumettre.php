@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Bouton « Soumettre » du configurateur : enregistre la configuration du
  * client connecté (data/soumissions/) et avertit l'architecte par e-mail
  * (dev@baracca.fr). L'architecte retrouve le fichier JSON dans le

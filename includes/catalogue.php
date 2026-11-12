@@ -1,6 +1,6 @@
 <?php
 /**
- * Baracca - Site archicad.baracca.fr
+ * Baracca - Site configurateur.baracca.fr
  * Catalogues du configurateur (data/catalogue/, un fichier JSON par rubrique :
  * menuiseries.json, modules.json, isolation.json, formes.json, charpentes.json,
  * murs.json, planchers.json, surfaces.json, interieurs.json, couvertures.json,
@@ -219,7 +219,10 @@ function archicad_catalogue_defaults(string $kind): array
             // favori = nom du favori Archicad à utiliser ('' = aucun, à
             // renseigner depuis le back-office) — repris dans l'export JSON.
             // surface = id d'une surface (sous-catalogue "surfaces") dont le
-            // visuel est utilisé dans les élévations.
+            // visuel est utilisé dans les élévations (revêtement EXTÉRIEUR
+            // par défaut du mur, appliqué côté client).
+            // interieur = id d'un revêtement "interieurs" (revêtement INTÉRIEUR
+            // par défaut du mur, appliqué côté client).
             return [
                 ['id' => 'clt90', 'nom' => 'Mur CLT 90 mm', 'epaisseur' => 0.09, 'image' => '', 'surface' => 'bardage_bois', 'rgb' => [140, 107, 89], 'favori' => '', 'tarif' => 0, 'created' => $today],
                 ['id' => 'clt140', 'nom' => 'Mur CLT 140 mm', 'epaisseur' => 0.14, 'image' => '', 'surface' => 'bardage_bois', 'rgb' => [140, 107, 89], 'favori' => '', 'tarif' => 0, 'created' => $today],
@@ -227,7 +230,10 @@ function archicad_catalogue_defaults(string $kind): array
                 ['id' => 'bloc200', 'nom' => 'Bloc béton 200 mm', 'epaisseur' => 0.20, 'image' => '', 'surface' => 'brique', 'rgb' => [158, 158, 158], 'favori' => '', 'tarif' => 0, 'created' => $today],
             ];
         case 'planchers':
-            // épaisseur (m) du plancher, affichée en élévation et exportée
+            // épaisseur (m) du plancher, affichée en élévation et exportée ;
+            // revetement_sup = revêtement par défaut de la surface supérieure
+            // (catalogue "interieurs"), revetement_chants = revêtement par
+            // défaut des chants (catalogue "surfaces") — appliqués côté client
             return [
                 ['id' => 'clt_dalle', 'nom' => 'Dalle CLT + chape', 'epaisseur' => 0.30, 'image' => '', 'favori' => '', 'tarif' => 0, 'created' => $today],
                 ['id' => 'plancher_bois', 'nom' => 'Plancher bois sur lambourdes', 'epaisseur' => 0.24, 'image' => '', 'favori' => '', 'tarif' => 0, 'created' => $today],
@@ -265,7 +271,10 @@ function archicad_catalogue_defaults(string $kind): array
         case 'toitures':
             // Rubrique toiture : épaisseur (m) dessinée au-dessus de la ligne
             // directrice en élévation, surface, couleur, favori — la géométrie
-            // (monopente/deux pentes/terrasse) se règle dans la rubrique « Formes »
+            // (monopente/deux pentes/terrasse) se règle dans la rubrique « Formes ».
+            // Revêtements par défaut appliqués côté client sur chaque pent :
+            // interieur (sous-face, catalogue "interieurs") et couverture
+            // (catalogue "couvertures")
             return [
                 ['id' => 'toit-monopente', 'nom' => 'Toiture monopente', 'epaisseur' => 0.30, 'image' => '', 'surface' => '', 'rgb' => [120, 113, 108], 'favori' => 'Baracca — Toiture monopente', 'tarif' => 0, 'created' => $today],
                 ['id' => 'toit-deuxpentes', 'nom' => 'Toiture deux pentes', 'epaisseur' => 0.30, 'image' => '', 'surface' => '', 'rgb' => [120, 113, 108], 'favori' => 'Baracca — Toiture deux pentes', 'tarif' => 0, 'created' => $today],
@@ -415,9 +424,25 @@ function archicad_load_catalogue(string $kind): array
     if ($kind === 'murs' || $kind === 'toitures') {
         // Surface par défaut = première surface du catalogue surfaces.json
         $firstSurface = (string) (archicad_load_catalogue('surfaces')[0]['id'] ?? '');
+        $firstInterieur = (string) (archicad_load_catalogue('interieurs')[0]['id'] ?? '');
         foreach ($items as $i => $item) {
             if (empty($item['surface'])) {
                 $items[$i]['surface'] = $firstSurface;
+            }
+            // Revêtement INTÉRIEUR par défaut (catalogue interieurs.json), appliqué
+            // côté client : face intérieure des murs, sous-face des pents de toiture
+            if (empty($item['interieur']) || archicad_catalogue_find('interieurs', (string) $item['interieur']) === null) {
+                $items[$i]['interieur'] = $firstInterieur;
+            }
+        }
+        if ($kind === 'toitures') {
+            // Couverture par défaut (catalogue couvertures.json), appliquée côté
+            // client sur chaque pent de toiture
+            $firstCouverture = (string) (archicad_load_catalogue('couvertures')[0]['id'] ?? '');
+            foreach ($items as $i => $item) {
+                if (empty($item['couverture']) || archicad_catalogue_find('couvertures', (string) $item['couverture']) === null) {
+                    $items[$i]['couverture'] = $firstCouverture;
+                }
             }
         }
     }
@@ -432,10 +457,20 @@ function archicad_load_catalogue(string $kind): array
         }
     }
     if ($kind === 'planchers') {
-        // Épaisseur en m (défaut 20 cm)
+        // Épaisseur en m (défaut 20 cm) ; revêtements par défaut appliqués côté
+        // client : surface supérieure (catalogue interieurs.json) et chants
+        // (catalogue surfaces.json)
+        $firstInterieur = (string) (archicad_load_catalogue('interieurs')[0]['id'] ?? '');
+        $firstSurface = (string) (archicad_load_catalogue('surfaces')[0]['id'] ?? '');
         foreach ($items as $i => $item) {
             if (empty($item['epaisseur'])) {
                 $items[$i]['epaisseur'] = 0.20;
+            }
+            if (empty($item['revetement_sup']) || archicad_catalogue_find('interieurs', (string) $item['revetement_sup']) === null) {
+                $items[$i]['revetement_sup'] = $firstInterieur;
+            }
+            if (empty($item['revetement_chants']) || archicad_catalogue_find('surfaces', (string) $item['revetement_chants']) === null) {
+                $items[$i]['revetement_chants'] = $firstSurface;
             }
         }
     }

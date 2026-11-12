@@ -1,1 +1,1 @@
-Header always set Content-Security-Policy "frame-ancestors https://archicad.baracca.fr https://baracca.fr https://www.baracca.fr"
+Header always set Content-Security-Policy "frame-ancestors https://configurateur.baracca.fr https://baracca.fr https://www.baracca.fr"
