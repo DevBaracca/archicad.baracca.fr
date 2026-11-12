@@ -53,6 +53,13 @@ if (!archicad_admin_is_logged_in()) {
 }
 
 archicad_admin_require_auth();
+$stats = archicad_stats_collect(); // métriques multi-sites (compteurs des onglets)
+// Onglets du tableau de bord : un onglet par site baracca.fr
+$tabsSites = ['configurateur' => 'Configurateur', 'invest' => 'Invest', 'blog' => 'Blog'];
+$siteTab = (string) ($_GET['site'] ?? 'configurateur');
+if (!isset($tabsSites[$siteTab])) {
+    $siteTab = 'configurateur';
+}
 $pageTitle = 'Tableau de bord';
 $adminPage = 'index';
 include __DIR__ . '/../includes/admin-head.php';
@@ -60,7 +67,13 @@ include __DIR__ . '/../includes/admin-head.php';
     <div class="admin-card">
       <h1>Tableau de bord</h1>
       <p>Gérez les comptes clients du configurateur et consultez les configurations soumises, depuis cette interface.</p>
+      <nav class="admin-tabs admin-subtabs">
+        <?php foreach ($tabsSites as $key => $label): ?>
+          <a href="index.php?site=<?= $key ?>"<?= $siteTab === $key ? ' class="active"' : '' ?>><?= $label ?> (<?= (int) ($stats['sites'][$key]['total'] ?? 0) ?>)</a>
+        <?php endforeach; ?>
+      </nav>
     </div>
+<?php if ($siteTab === 'configurateur'): ?>
     <div class="admin-grid">
       <div class="admin-card admin-dash-card">
         <div class="admin-dash-head">
@@ -88,6 +101,10 @@ include __DIR__ . '/../includes/admin-head.php';
       </div>
     </div>
 <?php
-// Statistiques d'utilisation (graphiques) sous les cartes du tableau de bord
+// Statistiques d'utilisation du configurateur (graphiques) sous les cartes
 include __DIR__ . '/../includes/admin-stats.php';
+else:
+// Onglet invest / blog : métriques de ce site, remontées au collecteur central
+include __DIR__ . '/../includes/admin-site-stats.php';
+endif;
 include __DIR__ . '/../includes/admin-footer.php';

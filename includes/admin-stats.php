@@ -4,7 +4,7 @@
  * Section « Statistiques d'utilisation » du tableau de bord.
  * Inclus par admin/index.php (qui a déjà require includes/stats.php).
  */
-$stats = archicad_stats_collect();
+$stats = $stats ?? archicad_stats_collect(); // $stats peut être déjà calculé par admin/index.php (onglets)
 
 // Conversion par utilisateur (top 10 par nb de configs) : barres configs vs soumis
 $convItems = [];
@@ -35,42 +35,11 @@ foreach (array_slice($conv, 0, 10, true) as $uid => $c) {
     </div>
 
     <div class="admin-grid stats-grid">
+      <?php $gridConfig = $stats['sites']['configurateur']['grid'] ?? $stats['grid']; ?>
       <div class="admin-card">
         <h3>Connexions par jour et heure</h3>
-        <p class="admin-hint">Heatmap des 7 jours de la semaine × 24 h (connexions enregistrées, tous sites confondus).</p>
-        <?= stats_heatmap($stats['grid']) ?>
-      </div>
-      <div class="admin-card">
-        <h3>Métriques des sites baracca.fr</h3>
-        <p class="admin-hint">Événements remontés au collecteur central (<code>php/stats_collect.php</code>) par chaque site : connexions, vues d'articles, téléchargements, contacts, newsletters… Le site courant (configurateur) est inclus.</p>
-        <?php
-        $eventLabels = [
-            'login' => 'Connexions',
-            'vue' => 'Vues d’articles',
-            'telechargement' => 'Téléchargements',
-            'contact' => 'Messages de contact',
-            'newsletter' => 'Inscriptions newsletter',
-            'demande' => 'Demandes',
-            'config' => 'Configurations enregistrées',
-            'soumission' => 'Soumissions',
-        ];
-        $labelEvent = fn (string $ev) => $eventLabels[$ev] ?? $ev;
-        $parSite = [];
-        foreach ($stats['sites'] as $site => $s) {
-            $parSite[$site . '.baracca.fr'] = $s['total'];
-        }
-        arsort($parSite);
-        ?>
-        <?php if ($stats['sites'] === []): ?>
-          <p class="admin-hint">Aucun événement enregistré pour le moment.</p>
-        <?php else: ?>
-          <h4>Événements par site</h4>
-          <?= stats_bars($parSite, 'Aucun événement.') ?>
-          <?php foreach ($stats['sites'] as $site => $s): ?>
-            <h4><?= htmlspecialchars($site) ?>.baracca.fr — <?= $s['total'] ?> événement(s), <?= count($s['users']) ?> utilisateur(s) distinct(s)</h4>
-            <?= stats_bars(array_combine(array_map($labelEvent, array_keys($s['events'])), array_values($s['events'])), 'Aucun événement.') ?>
-          <?php endforeach; ?>
-        <?php endif; ?>
+        <p class="admin-hint">Heatmap des 7 jours de la semaine × 24 h (connexions au configurateur). Les connexions des autres sites figurent dans leurs onglets du tableau de bord.</p>
+        <?= stats_heatmap($gridConfig) ?>
       </div>
       <div class="admin-card">
         <h3>Conversion par utilisateur (top 10)</h3>

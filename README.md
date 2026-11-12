@@ -363,7 +363,9 @@ Sites autorisés : `configurateur`, `invest`, `blog`, `dev`. Événements :
 `config`, `soumission`. Les événements sont ajoutés à `data/metriques.jsonl`
 (champs `site` / `event` / `user` / `detail`, plafond 20 000 lignes) puis
 agrégés par site dans `includes/stats.php` (`archicad_stats_collect()` →
-clé `sites`) et affichés dans la carte « Métriques des sites baracca.fr ».
+clé `sites`) et affichés dans le tableau de bord : un onglet par site
+(configurateur / invest / blog) sous le titre « Tableau de bord »
+(`admin/index.php?site=invest|blog`, panneau `includes/admin-site-stats.php`).
 Côté émetteur, `includes/stats_client.php` (invest, blog) envoie l'événement
 sans jamais bloquer la page (timeout 2 s, erreurs ignorées).
 
