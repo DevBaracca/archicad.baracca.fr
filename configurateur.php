@@ -6,13 +6,17 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/configurations.php';
 
-// Connecté = session active ET compte toujours existant
+// Connecté = compte client actif OU session administrateur (back-office) :
+// un admin déjà loggé au back-office bascule directement dans le configurateur.
+// NB : variable distincte de $isLoggedIn, que includes/head.html réinitialise
+// (session client seule) pour la navigation.
 $user = archicad_current_user();
-$isLoggedIn = $user !== null;
+$admin = $user === null ? archicad_current_admin() : null;
+$accesConfig = $user !== null || $admin !== null;
 
-// Chargement d'une configuration enregistrée (?config=<id>) — réservée au propriétaire
+// Chargement d'une configuration enregistrée (?config=<id>) — réservée au propriétaire (compte client)
 $configId = '';
-if ($isLoggedIn && isset($_GET['config'])) {
+if ($user !== null && isset($_GET['config'])) {
     $candidate = (string) $_GET['config'];
     $config = archicad_find_configuration($candidate);
     if ($config !== null && ($config['userId'] ?? '') === (string) $user['id']) {
@@ -32,18 +36,32 @@ include 'includes/head.html';
         <h1>Configurateur de modules</h1>
         <p class="hero-subtitle">Concevez, modifiez, obtenez un chiffrage en temps réel</p>
       </div>
-      <?php if ($isLoggedIn): ?>
+      <?php if ($accesConfig): ?>
         <div class="hero-side fade-in">
+          <?php if ($admin !== null): ?>
+          <p class="hero-user">
+            Connecté en tant qu'administrateur <strong><?= htmlspecialchars((string) $admin['username']) ?></strong><br>
+            <a href="admin/index.php">Back-office</a> — <a href="deconnexion.php">Se déconnecter</a>
+          </p>
+          <?php else: ?>
           <p class="hero-user">
             Connecté en tant que <strong><?= htmlspecialchars(trim(($user['prenom'] ?? '') . ' ' . ($user['nom'] ?? ''))) ?></strong><br>
             <a href="compte.php">Mon compte</a> — <a href="deconnexion.php">Se déconnecter</a>
           </p>
+          <?php endif; ?>
+          <?php if ($admin === null): ?>
           <p class="hero-user-note">
             Avec votre compte client, vous pouvez enregistrer vos configurations pour les reprendre
             plus tard (onglet « Export JSON ») et les soumettre à Baracca via le bouton « Soumettre ».
             À défaut, aucune donnée n'est transmise, à l'exception de l'adresse e-mail si vous vous
             inscrivez à la newsletter en pied de page.
           </p>
+          <?php else: ?>
+          <p class="hero-user-note">
+            Session administrateur : vous pouvez utiliser le configurateur librement, enregistrer des
+            configurations et tester le bouton « Soumettre » (elles apparaîtront dans le back-office).
+          </p>
+          <?php endif; ?>
         </div>
       <?php endif; ?>
     </div>
@@ -52,7 +70,7 @@ include 'includes/head.html';
   <!-- Configurateur -->
   <section class="section" style="padding-top: var(--spacing-md);">
     <div class="container">
-      <?php if ($isLoggedIn): ?>
+      <?php if ($accesConfig): ?>
         <div class="fade-in">
           <iframe
             id="configurateur-frame"

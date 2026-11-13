@@ -15,5 +15,9 @@ php/modules-configures/
 assets/images/catalogue/*
 !assets/images/catalogue/.gitkeep
 
+# Visuels (copies PNG du plan) des configurations « modèles » — jamais versionnés
+assets/images/modeles/*
+!assets/images/modeles/.gitkeep
+
 # Dump de la base en ligne (dossier dateactuel) — jamais versionné
 dateactuel/

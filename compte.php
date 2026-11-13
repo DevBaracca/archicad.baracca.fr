@@ -6,9 +6,14 @@
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/configurations.php';
 
-// Page réservée aux comptes connectés
+// Page réservée aux comptes clients connectés
 $user = archicad_current_user();
 if ($user === null) {
+    if (archicad_is_admin()) {
+        // Session administrateur : pas de compte client -> direction le configurateur
+        header('Location: configurateur.php');
+        exit;
+    }
     // Session active mais compte supprimé entre-temps : on nettoie la session
     archicad_logout();
     header('Location: connexion.php');

@@ -17,19 +17,21 @@
 
 require_once __DIR__ . '/../includes/admin-auth.php';
 require_once __DIR__ . '/../includes/catalogue.php';
+require_once __DIR__ . '/../includes/configurations.php';
 
 archicad_admin_require_auth();
 
 $section = (string) ($_GET['section'] ?? 'modules');
 // Onglets : Structure (Modules, Isolation, Formes, Autonomie), Catalogue (Charpentes,
 // Murs, Planchers, Complexe de toiture, Ouvrants, Fenêtres de toit, systèmes Aut.),
-// et Revêtements (Extérieur = surfaces, Intérieur, Toiture = couvertures)
+// Revêtements (Extérieur = surfaces, Intérieur, Toiture = couvertures)
+// et Modèles (configurations « modèles » enregistrées par les administrateurs)
 // (l'ancien onglet « enveloppe » est éclaté en sous-onglets)
 if ($section === 'enveloppe') {
     $sous0 = (string) ($_GET['sous'] ?? '');
     $section = in_array($sous0, ['murs', 'planchers', 'toitures', 'surfaces', 'interieurs', 'couvertures'], true) ? $sous0 : 'murs';
 }
-if (!in_array($section, ['modules', 'isolation', 'formes', 'charpentes', 'autonomie', 'promotions', 'systemes_aut', 'fenetres_toit', 'murs', 'planchers', 'toitures', 'menuiseries', 'surfaces', 'interieurs', 'couvertures'], true)) {
+if (!in_array($section, ['modules', 'isolation', 'formes', 'charpentes', 'autonomie', 'promotions', 'systemes_aut', 'fenetres_toit', 'murs', 'planchers', 'toitures', 'menuiseries', 'surfaces', 'interieurs', 'couvertures', 'modeles'], true)) {
     $section = 'modules';
 }
 
@@ -537,6 +539,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         cat_redirect('autonomie', 'deleted');
     }
 
+    // ----- Modèles (configurations « modèles » enregistrées par les admins) -----
+    if ($action === 'delete_config') {
+        archicad_admin_delete_configuration(trim((string) ($_POST['id'] ?? '')));
+        cat_redirect('modeles', 'deleted');
+    }
+    if ($action === 'update_config') {
+        $id = trim((string) ($_POST['id'] ?? ''));
+        $nom = trim((string) ($_POST['nom'] ?? ''));
+        $description = trim((string) ($_POST['description'] ?? ''));
+        if ($nom === '') {
+            cat_redirect('modeles', 'invalid');
+        }
+        $file = (isset($_FILES['visuel']) && is_array($_FILES['visuel'])) ? $_FILES['visuel'] : null;
+        $res = archicad_admin_update_configuration($id, $nom, $description, $file, isset($_POST['remove_visuel']));
+        if (!$res['ok']) {
+            cat_redirect('modeles', 'invalid', (string) ($res['error'] ?? ''));
+        }
+        cat_redirect('modeles', 'saved');
+    }
+
     // ----- Promotions (onglet « Promotions », zone Structure) -----
     // Code + période (dateDebut/dateFin incluses) + réduction (%) + modules
     // auxquels la promotion est affectée.
@@ -819,6 +841,7 @@ $facades = archicad_load_catalogue('surfaces');       // revêtements Extérieur
 $interieurs = archicad_load_catalogue('interieurs');   // revêtements Intérieur
 $couvertures = archicad_load_catalogue('couvertures'); // revêtements Toiture (couvertures)
 $toitures = archicad_catalogue_toitures();
+$modeles = archicad_configurations_modeles();          // configurations « modèles » (admins)
 
 $typeLabels = ['baie' => 'Baie vitrée', 'fenetre' => 'Fenêtre', 'porte' => 'Porte'];
 $toitureLabels = array_column($toitures, 'nom', 'id');
@@ -841,6 +864,7 @@ $editSystemeAut = null;
 $editAutonomie = null;
 $editFenetreToit = null;
 $editPromotion = null;
+$editModele = null;
 $editEnv = ['sous' => '', 'item' => null];
 if (($editId = trim((string) ($_GET['edit'] ?? ''))) !== '') {
     if ($section === 'menuiseries') {
@@ -861,6 +885,9 @@ if (($editId = trim((string) ($_GET['edit'] ?? ''))) !== '') {
         $editAutonomie = archicad_catalogue_find('autonomie', $editId);
     } elseif ($section === 'promotions') {
         $editPromotion = archicad_catalogue_find('promotions', $editId);
+    } elseif ($section === 'modeles') {
+        $m = archicad_find_configuration($editId);
+        $editModele = ($m !== null && !empty($m['modele'])) ? $m : null;
     } elseif (in_array($section, cat_enveloppe_kinds(), true)) {
         $sous = $section;
         $editEnv = ['sous' => $sous, 'item' => archicad_catalogue_find($sous, $editId)];
@@ -907,12 +934,16 @@ $groupes = [
         ['interieurs', 'Intérieur', count($interieurs)],
         ['couvertures', 'Toiture', count($couvertures)],
     ]],
+    'modeles' => ['label' => 'Modèles', 'sections' => [
+        ['modeles', 'Configurations modèles', count($modeles)],
+    ]],
 ];
 $groupeOf = [
     'modules' => 'structure', 'isolation' => 'structure', 'formes' => 'structure', 'autonomie' => 'structure', 'promotions' => 'structure',
     'charpentes' => 'catalogue', 'murs' => 'catalogue', 'planchers' => 'catalogue',
     'toitures' => 'catalogue', 'menuiseries' => 'catalogue', 'fenetres_toit' => 'catalogue', 'systemes_aut' => 'catalogue',
     'surfaces' => 'surfaces', 'interieurs' => 'surfaces', 'couvertures' => 'surfaces',
+    'modeles' => 'modeles',
 ];
 $groupeActif = $groupeOf[$section] ?? 'structure';
 ?>
@@ -1496,6 +1527,69 @@ $groupeActif = $groupeOf[$section] ?? 'structure';
         <div class="admin-actions">
           <button type="submit" class="btn btn-cta">Enregistrer</button>
           <a href="configurateur.php?section=isolation" class="btn btn-secondary">Annuler</a>
+        </div>
+      </form>
+    </div>
+    <?php modal_close(); endif; ?>
+
+    <?php elseif ($section === 'modeles'): ?>
+    <div class="admin-card">
+      <h2>Configurations modèles (<?= count($modeles) ?>)</h2>
+      <p class="admin-hint">Configurations enregistrées par un administrateur avec la case « enregistrer en tant que modèle » (zone Sauvegardes du configurateur, avec description et copie PNG du plan). Elles sont proposées aux nouveaux clients à la création de leur compte (page intermédiaire avant le configurateur) et rechargeables à tout moment via le bouton « Modèles » du configurateur. Le crayon permet de modifier le nom, la description et le visuel.</p>
+      <?php if ($modeles === []): ?>
+        <p class="admin-hint">Aucun modèle pour le moment : connectez-vous au configurateur avec un compte administrateur, puis enregistrez une configuration en cochant « enregistrer en tant que modèle ».</p>
+      <?php else: ?>
+        <table class="admin-table">
+          <thead>
+            <tr><th>Nom</th><th>Visuel</th><th>Description</th><th>Enregistré par</th><th>Créé le</th><th>Modifié le</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            <?php foreach ($modeles as $m): ?>
+              <tr>
+                <td><strong><?= htmlspecialchars((string) $m['nom']) ?></strong></td>
+                <td><?php if ((string) ($m['visuel'] ?? '') !== ''): ?><img src="../<?= ltrim(htmlspecialchars((string) $m['visuel']), '/') ?>" alt="" class="admin-catalogue-thumb"><?php else: ?><span class="admin-hint">—</span><?php endif; ?></td>
+                <td><?= htmlspecialchars(mb_strimwidth((string) ($m['description'] ?? ''), 0, 120, '…')) ?></td>
+                <td><?= htmlspecialchars((string) ($m['userId'] ?? '')) ?></td>
+                <td><?= htmlspecialchars((string) ($m['created'] ?? '')) ?></td>
+                <td><?= htmlspecialchars((string) ($m['updated'] ?? '')) ?></td>
+                <td class="admin-actions">
+                  <?= cat_action_edit('configurateur.php?section=modeles&edit=' . urlencode((string) $m['id'])) ?>
+                  <?= cat_action_delete('configurateur.php?section=modeles', $csrf, 'delete_config', (string) $m['id'], 'Supprimer ce modèle ?') ?>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
+    </div>
+    <?php if ($editModele): modal_open('configurateur.php?section=modeles'); ?>
+    <div class="admin-card">
+      <h2>Modifier le modèle : <?= htmlspecialchars((string) $editModele['nom']) ?></h2>
+      <form method="post" action="configurateur.php?section=modeles" enctype="multipart/form-data">
+        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+        <input type="hidden" name="action" value="update_config">
+        <input type="hidden" name="id" value="<?= htmlspecialchars((string) $editModele['id']) ?>">
+        <div class="modal-visual-row">
+          <?php if ((string) ($editModele['visuel'] ?? '') !== ''): ?>
+            <img src="../<?= ltrim(htmlspecialchars((string) $editModele['visuel']), '/') ?>" alt="" class="modal-visual-img">
+            <label class="admin-hint"><input type="checkbox" name="remove_visuel" value="1"> Supprimer le visuel</label>
+          <?php endif; ?>
+          <label for="mo-visuel">Nouveau visuel (copie PNG du plan)</label>
+          <input type="file" id="mo-visuel" name="visuel" accept="image/*">
+          <span class="admin-hint">JPG, PNG, WebP ou GIF — 5 Mo max.</span>
+        </div>
+        <hr class="admin-sep">
+        <div class="admin-form-row">
+          <label for="mo-nom">Nom</label>
+          <input type="text" id="mo-nom" name="nom" required value="<?= htmlspecialchars((string) $editModele['nom']) ?>">
+        </div>
+        <div class="admin-form-row">
+          <label for="mo-desc">Description (visible par les clients lors du choix du modèle)</label>
+          <textarea id="mo-desc" name="description" rows="3"><?= htmlspecialchars((string) ($editModele['description'] ?? '')) ?></textarea>
+        </div>
+        <div class="admin-actions">
+          <button type="submit" class="btn btn-cta">Enregistrer</button>
+          <a href="configurateur.php?section=modeles" class="btn btn-secondary">Annuler</a>
         </div>
       </form>
     </div>

@@ -11,7 +11,8 @@ require_once __DIR__ . '/../includes/soumissions.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
-$user = archicad_current_user();
+// Compte client connecté, ou session administrateur (id « admin:<username> »)
+$user = archicad_api_user();
 if ($user === null) {
     http_response_code(401);
     echo json_encode(['ok' => false, 'error' => 'Non connecté.']);

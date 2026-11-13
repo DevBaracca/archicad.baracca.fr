@@ -11,7 +11,8 @@ require_once __DIR__ . '/../includes/configurations.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
-$user = archicad_current_user();
+// Compte client connecté, ou session administrateur (id « admin:<username> »)
+$user = archicad_api_user();
 if ($user === null) {
     http_response_code(401);
     echo json_encode(['ok' => false, 'error' => 'Non connecté.']);
@@ -31,6 +32,8 @@ switch ($action) {
             return [
                 'id' => (string) $c['id'],
                 'nom' => (string) $c['nom'],
+                'description' => (string) ($c['description'] ?? ''),
+                'visuel' => (string) ($c['visuel'] ?? ''),
                 'created' => (string) $c['created'],
                 'updated' => (string) $c['updated'],
             ];
@@ -48,7 +51,13 @@ switch ($action) {
         }
         $id = isset($body['id']) ? (string) $body['id'] : null;
         $json = isset($body['json']) ? (string) $body['json'] : null;
-        $record = archicad_save_configuration($userId, $nom, $config, $id, $json);
+        // Le flag « modèle » est réservé à une session administrateur ;
+        // description + visuel (data URL PNG de la capture du plan) sont
+        // acceptés pour toute sauvegarde manuelle (modèle ou configuration perso)
+        $modele = !empty($body['modele']) && archicad_is_admin();
+        $description = mb_substr(trim((string) ($body['description'] ?? '')), 0, 2000);
+        $visuelData = (string) ($body['visuel'] ?? '');
+        $record = archicad_save_configuration($userId, $nom, $config, $id, $json, $modele, $description, $visuelData !== '' ? $visuelData : null);
         echo json_encode([
             'ok' => true,
             'configuration' => [
@@ -76,6 +85,44 @@ switch ($action) {
             http_response_code(404);
         }
         echo json_encode(['ok' => $ok, 'error' => $ok ? null : 'Configuration introuvable.']);
+        break;
+
+    // Liste des configurations « modèles » (enregistrées par un admin) :
+    // proposées aux nouveaux clients et rechargeables via le pop-up « Modèles »
+    case 'list_modeles':
+        echo json_encode([
+            'ok' => true,
+            'modeles' => array_map(fn ($c) => [
+                'id' => (string) $c['id'],
+                'nom' => (string) $c['nom'],
+                'by' => (string) ($c['userId'] ?? ''),
+                'description' => (string) ($c['description'] ?? ''),
+                'visuel' => (string) ($c['visuel'] ?? ''),
+                'created' => (string) ($c['created'] ?? ''),
+                'updated' => (string) ($c['updated'] ?? ''),
+            ], archicad_configurations_modeles()),
+        ]);
+        break;
+
+    // Applique un modèle : copie la configuration du modèle dans les
+    // configurations du compte connecté (qui en devient propriétaire)
+    case 'apply_modele':
+        $record = archicad_apply_modele((string) ($body['id'] ?? ''), $userId);
+        if ($record === null) {
+            http_response_code(404);
+            echo json_encode(['ok' => false, 'error' => 'Modèle introuvable.']);
+            break;
+        }
+        echo json_encode([
+            'ok' => true,
+            'configuration' => [
+                'id' => (string) $record['id'],
+                'nom' => (string) $record['nom'],
+                'created' => (string) $record['created'],
+                'updated' => (string) $record['updated'],
+                'config' => $record['config'],
+            ],
+        ]);
         break;
 
     default:

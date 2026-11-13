@@ -24,6 +24,7 @@ configurateur.php              Page d'intégration de l'application (iframe) —
                                  dans l'app, plan et élévation empilés à gauche, réglages à droite,
                                  sur fond de page foncé.
 inscription.php                Création d'un compte client (accès au configurateur)
+modele.php                     Choix du point de départ à la 1ʳᵉ connexion (défaut ou modèle)
 connexion.php                  Connexion client (email = identifiant)
 deconnexion.php                Déconnexion client
 compte.php                     Espace client : profil (modifiable, réf. cadastrale), mot de passe, configurations (ouvrir/supprimer)
@@ -62,6 +63,14 @@ L'accès au configurateur nécessite un **compte client**, créé en ligne depui
 référence cadastrale (facultative), email et mot de passe. L'email sert
 d'identifiant de connexion (`connexion.php`).
 
+Un **administrateur du back-office** peut aussi se connecter au configurateur :
+depuis `connexion.php` avec son identifiant admin + mot de passe (la session admin
+est alors posée), ou directement s'il est déjà connecté au back-office dans le
+même navigateur (`configurateur.php` et `php/api_session.php` acceptent la
+session admin — `archicad_can_use_configurateur()` / `archicad_api_user()`).
+L'admin peut enregistrer des configurations et tester « Soumettre » sous l'id
+`admin:<username>`.
+
 Depuis l'onglet « Export JSON » du configurateur, un client connecté peut :
 
 - **enregistrer** sa configuration pour la reprendre ultérieurement (bouton
@@ -75,6 +84,24 @@ Depuis l'onglet « Export JSON » du configurateur, un client connecté peut :
   enregistrée dans `data/soumissions/` et l'architecte est averti par e-mail
   (`dev@baracca.fr`) ; il retrouve le fichier JSON correspondant dans le
   back-office (`admin/soumissions.php`).
+
+**Configurations « modèles »** : un administrateur connecté au configurateur
+peut cocher « Enregistrer en tant que modèle » dans la fenêtre « Sauvegardes »
+(le flag `modele` n'est accepté que pour une session admin, vérifié côté API),
+avec une **description** et un **visuel** = copie PNG du plan capturée côté
+client (data URL envoyée au save, stockée dans `assets/images/modeles/`).
+Tout utilisateur connecté peut aussi joindre une description et le visuel PNG du
+plan à ses propres sauvegardes manuelles (bouton « Enregistrer cette
+configuration » — l'enregistrement automatique à la fermeture de la page
+n'envoie ni description ni visuel).
+Les modèles sont listés, modifiables (nom, description, visuel) et supprimables
+dans le back-office (`admin/configurateur.php?section=modeles`, action
+`update_config` / `delete_config` — la suppression efface aussi le fichier PNG).
+À la création de son compte, le client passe par `modele.php` pour choisir la
+configuration par défaut ou un modèle (visuel + description affichés ; le modèle
+est copié dans ses configurations via `archicad_apply_modele()`), et peut
+à tout moment repartir d'un modèle depuis le bouton « Modèles » du configurateur
+(actions API `list_modeles` / `apply_modele` dans `php/api_configurations.php`).
 
 **Tableau de bord « Statistiques d'utilisation »** (`admin/index.php`, calculs dans
 `includes/stats.php`, vue `includes/admin-stats.php`, graphiques en barres CSS +

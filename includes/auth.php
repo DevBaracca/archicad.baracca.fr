@@ -8,15 +8,19 @@
  */
 
 require_once __DIR__ . '/../config.php';
+// admin-auth.php démarre la session (cookie renforcé) et fournit les comptes
+// administrateurs du back-office (data/admins.json) : un admin peut aussi se
+// connecter à l'espace client / au configurateur avec son compte admin.
+require_once __DIR__ . '/admin-auth.php';
 require_once __DIR__ . '/users.php';
 require_once __DIR__ . '/stats.php'; // log d'événements de connexion (métriques)
 
-// Cookie de session renforcé : inaccessible en JavaScript, envoyé uniquement sur ce site (SameSite=Lax)
-session_set_cookie_params([
-    'httponly' => true,
-    'samesite' => 'Lax',
-]);
+// Filet de sécurité si la session n'est pas encore démarrée (admin-auth.php la démarre)
 if (session_status() === PHP_SESSION_NONE) {
+    session_set_cookie_params([
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
     session_start();
 }
 
@@ -25,16 +29,77 @@ function archicad_is_logged_in(): bool
     return !empty($_SESSION['archicad_user_id']);
 }
 
-function archicad_login(string $email, string $password): bool
+// Session administrateur active (connecté au back-office dans ce navigateur) :
+// l'admin bascule directement dans le configurateur, sans compte client
+function archicad_is_admin(): bool
 {
-    $user = archicad_find_user_by_email($email);
+    return !empty($_SESSION['archicad_admin']);
+}
+
+// Administrateur actuellement connecté via la session (null sinon)
+function archicad_current_admin(): ?array
+{
+    $username = (string) ($_SESSION['archicad_admin_username'] ?? '');
+    if ($username === '') {
+        return null;
+    }
+    return archicad_find_admin_by_username($username);
+}
+
+// Accès au configurateur : compte client OU session administrateur
+function archicad_can_use_configurateur(): bool
+{
+    return archicad_is_logged_in() || archicad_is_admin();
+}
+
+// Compte effectif des API du configurateur : le compte client, ou à défaut
+// l'administrateur avec un id dédié « admin:<username> » (enregistrement des
+// configurations et soumissions possibles aussi pour un admin)
+function archicad_api_user(): ?array
+{
+    $user = archicad_current_user();
+    if ($user !== null) {
+        return $user;
+    }
+    $admin = archicad_current_admin();
+    if ($admin === null) {
+        return null;
+    }
+    return [
+        'id' => 'admin:' . (string) $admin['username'],
+        'email' => '',
+        'nom' => (string) $admin['username'],
+        'prenom' => 'Admin',
+        'admin' => true,
+    ];
+}
+
+// Connexion à l'espace client : email + mot de passe d'un compte client,
+// OU identifiant + mot de passe d'un administrateur du back-office
+function archicad_login(string $identifier, string $password): bool
+{
+    $user = archicad_find_user_by_email($identifier);
     if ($user !== null && password_verify($password, (string) $user['hash'])) {
         // Nouvel identifiant de session à la connexion (protection contre la fixation de session)
         session_regenerate_id(true);
+        // Une seule identité par session : on écarte une éventuelle session admin
+        unset($_SESSION['archicad_admin'], $_SESSION['archicad_admin_username']);
         $_SESSION['archicad_user_id'] = (string) $user['id'];
         // Métriques : date de dernière connexion + ouverture de session + log événement (heatmap)
         archicad_touch_login((string) $user['id']);
         archicad_stats_log_login((string) $user['id']);
+        return true;
+    }
+    // Compte administrateur du back-office : la session admin est posée,
+    // elle donne accès au configurateur (et au back-office)
+    $admin = archicad_find_admin_by_username($identifier);
+    if ($admin !== null && password_verify($password, (string) $admin['hash'])) {
+        session_regenerate_id(true);
+        // Une seule identité par session : on écarte une éventuelle session client
+        unset($_SESSION['archicad_user_id'], $_SESSION['archicad_user_csrf']);
+        $_SESSION['archicad_admin'] = true;
+        $_SESSION['archicad_admin_username'] = (string) $admin['username'];
+        archicad_stats_log_login('admin:' . (string) $admin['username']); // métrique (heatmap connexions)
         return true;
     }
     return false;

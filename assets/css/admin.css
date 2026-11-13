@@ -214,6 +214,12 @@
   margin: 14px 18px 0;
 }
 
+/* Conteneur replié (Structure / Catalogue / Revêtements / Modèles) : les onglets
+   ne touchent pas le bas du conteneur */
+.admin-groupe:not(.actif) .admin-subtabs {
+  margin-bottom: 14px;
+}
+
 .admin-groupe .admin-subtabs a {
   padding: 6px 12px;
   font-size: 0.85rem;
@@ -489,21 +495,34 @@
   gap: 6px;
 }
 
-/* Colonne d'actions des listes : largeur fixe pour que les trois icônes soient
-   alignées d'une ligne à l'autre, sans déformation (pas de rétrécissement) */
+/* Colonne d'actions des listes : largeur fixe pour que les icônes soient
+   alignées d'une ligne à l'autre, sans déformation (pas de rétrécissement).
+   La cellule reste une vraie cellule de tableau (display: table-cell, pas flex) :
+   sinon, quand une ligne contient un visuel (ligne plus haute), le trait de
+   séparation bas de la cellule ne couvre plus toute la ligne et les icônes ne
+   sont plus centrées verticalement. */
 td.admin-actions {
+  display: table-cell;
   width: 126px; /* 3 icônes de 30 px + 2 écarts de 6 px + marge */
   white-space: nowrap;
-  flex-wrap: nowrap;
+  vertical-align: middle;
 }
 
-td.admin-actions > * {
-  flex-shrink: 0;
+td.admin-actions > * + * {
+  margin-left: 6px; /* espacement des icônes (la cellule n'est plus en flex) */
 }
 
 .admin-inline-form {
   display: inline-flex;
   margin: 0;
+  vertical-align: middle;
+}
+
+/* Dans un tableau, la règle « .admin-table td form { display: inline } »
+   s'applique : on restaure inline-flex pour que le formulaire d'action
+   ait la même hauteur que le lien icône voisin (alignement haut identique) */
+.admin-table td form.admin-inline-form {
+  display: inline-flex;
   vertical-align: middle;
 }
 
@@ -513,6 +532,8 @@ td.admin-actions > * {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  vertical-align: middle;
+  padding: 0; /* même boîte que l'ancre <a class="icon-btn"> : pas de padding UA du <button> */
   width: 30px;
   height: 30px;
   border-radius: 6px;

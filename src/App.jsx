@@ -1838,6 +1838,12 @@ export default function App() {
   const [addPick, setAddPick] = useState(null); // { instId, side } : choix du modèle à ajouter via le + du plan
   const [chiffrageCardOpen, setChiffrageCardOpen] = useState(false); // carte Chiffrage réduite par défaut (bande grise seule)
   const [sauvOpen, setSauvOpen] = useState(false); // pop-up « Sauvegardes » fermée par défaut
+  const [saveModele, setSaveModele] = useState(false); // case « enregistrer en tant que modèle » (admin seulement)
+  const [saveDesc, setSaveDesc] = useState(""); // description du modèle (admin seulement)
+  const planSvgRef = useRef(null); // élément <svg> du panneau Plan, pour la capture PNG du modèle
+  const [modelesOpen, setModelesOpen] = useState(false); // pop-up « Modèles » (changer de modèle)
+  const [modeles, setModeles] = useState([]); // configurations modèles (back-office)
+  const [modelesPos, setModelesPos] = useState(null);
   const [reglagesOpen, setReglagesOpen] = useState(false); // conteneurs de la première ligne repliés au démarrage
   const [soumettreOpen, setSoumettreOpen] = useState(false); // pop-up « Soumettre » fermée par défaut
   const [murOpen, setMurOpen] = useState(false); // pop-up Mur/Toiture : ouverte uniquement au clic sur le plan
@@ -2548,13 +2554,80 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalogue]);
 
+  // Capture du plan (SVG du panneau « Plan ») en PNG : le SVG est cloné,
+  // rendu dans un canvas via une URL blob (les <img> SVG autonomes ne chargent
+  // ni les styles externes ni les images externes : on les inline avant)
+  const capturePlanPng = async () => {
+    const svg = planSvgRef.current;
+    if (!svg) return null;
+    try {
+      const vb = (svg.getAttribute("viewBox") || "0 0 560 400").split(/\s+/).map(Number);
+      const W = vb[2] || 560, H = vb[3] || 400;
+      const SCALE = 2; // rendu 2x pour une image nette
+      const clone = svg.cloneNode(true);
+      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      clone.setAttribute("width", String(W * SCALE));
+      clone.setAttribute("height", String(H * SCALE));
+      clone.removeAttribute("style");
+      const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+      style.textContent = ".face-label { font-size: 10px; font-weight: 500; }";
+      clone.insertBefore(style, clone.firstChild);
+      // texture de charpente éventuelle (pattern <image>) → data URL
+      for (const im of clone.querySelectorAll("image")) {
+        const href = im.getAttribute("href") || im.getAttribute("xlink:href") || "";
+        if (href && !href.startsWith("data:")) {
+          try {
+            const r = await fetch(href);
+            const b = await r.blob();
+            const dataUrl = await new Promise((res, rej) => {
+              const fr = new FileReader();
+              fr.onload = () => res(fr.result);
+              fr.onerror = rej;
+              fr.readAsDataURL(b);
+            });
+            im.setAttribute("href", dataUrl);
+            im.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", dataUrl);
+          } catch { /* la texture ne s'affichera pas, le reste du plan si */ }
+        }
+      }
+      const xml = new XMLSerializer().serializeToString(clone);
+      const url = URL.createObjectURL(new Blob([xml], { type: "image/svg+xml;charset=utf-8" }));
+      try {
+        const img = new Image();
+        await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("svg")); img.src = url; });
+        const canvas = document.createElement("canvas");
+        canvas.width = W * SCALE;
+        canvas.height = H * SCALE;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        return canvas.toDataURL("image/png");
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      return null; // pas de visuel si la capture échoue
+    }
+  };
+
   const enregistrer = async () => {
     const nom = (saveName || d.nom || "module_baracca").trim();
+    const asModele = !!(saveModele && session?.admin);
     try {
-      const g = await postConfigs({ action: "save", nom, config: d, json });
+      // flag « modèle » réservé à une session administrateur (vérifié aussi côté API) ;
+      // toute sauvegarde manuelle (connecté) embarque une description et une
+      // copie PNG du plan — l'enregistrement automatique (pagehide) n'envoie rien de tout ça
+      let visuel = null;
+      if (session?.loggedIn) {
+        try { visuel = await capturePlanPng(); } catch { visuel = null; }
+      }
+      const g = await postConfigs({ action: "save", nom, config: d, json, modele: asModele, description: saveDesc, visuel });
       if (g.ok) {
-        setConfigMsg("Configuration enregistrée ✓");
+        setConfigMsg(asModele ? "Modèle enregistré ✓" : "Configuration enregistrée ✓");
         setSaveName("");
+        setSaveModele(false);
+        setSaveDesc("");
         await refreshConfigs();
       } else {
         setConfigMsg(g.error || "Erreur lors de l'enregistrement.");
@@ -2621,8 +2694,88 @@ export default function App() {
           (aligné avec le bouton Soumettre en haut de la colonne de droite) */}
       <div className="submit-hint-row">
         <p className="submit-hint">Utilisez les boutons pour enregistrer ou soumettre votre projet — nous répondons dans les meilleurs délais</p>
-        <button type="button" className="action-btn" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); const w = window.innerWidth || 1200; setSauvPos({ x: Math.max(8, Math.min((w - 400) / 2, w - 416)), y: r.bottom + 20 }); setSauvOpen(true); }} title="Ouvrir la fenêtre Sauvegardes">Sauvegardes</button>
+        <button type="button" className="action-btn" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); const w = window.innerWidth || 1200; setSauvPos({ x: Math.max(8, Math.min((w - 680) / 2, w - 696)), y: r.bottom + 20 }); setSauvOpen(true); }} title="Ouvrir la fenêtre Sauvegardes">Sauvegardes</button>
+        {session?.loggedIn && (
+          <button type="button" className="action-btn" style={{ marginLeft: 8 }} title="Repartir de la configuration par défaut ou d'un modèle"
+            onClick={async (e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              const w = window.innerWidth || 1200;
+              setModelesPos({ x: Math.max(8, Math.min((w - 680) / 2, w - 696)), y: r.bottom + 20 });
+              setModelesOpen(true);
+              try {
+                const l = await postConfigs({ action: "list_modeles" });
+                if (l.ok) setModeles(l.modeles || []);
+              } catch { setModeles([]); }
+            }}>Modèles</button>
+        )}
       </div>
+      {modelesOpen && createPortal(
+      <div className="modal-overlay center" onClick={() => setModelesOpen(false)}>
+        <div className="card modal modal-lg" style={{ position: "fixed", margin: 0, left: modelesPos?.x ?? 8, top: modelesPos?.y ?? 8 }} onClick={(e) => e.stopPropagation()}>
+          <div className="card-title modal-title" onPointerDown={startCenterDrag(setModelesPos)} style={{ cursor: "grab", touchAction: "none" }}>
+            <span>Modèles</span>
+            <button type="button" className="icon-btn danger" onClick={() => setModelesOpen(false)} title="Fermer" aria-label="Fermer">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+            </button>
+          </div>
+          <div className="card-body modal-body">
+            <p className="config-hint" style={{ marginTop: 0 }}>
+              Repartir de la <strong>configuration par défaut</strong> (réglages du back-office) ou d'un
+              <strong> modèle</strong> enregistré par un administrateur. La configuration actuelle sera remplacée.
+            </p>
+            <ul className="config-list">
+              <li className="config-row">
+                <div>
+                  <strong>Configuration par défaut</strong>
+                  <span className="config-date">module, isolation, forme, charpente par défaut du back-office</span>
+                </div>
+                <div className="config-actions">
+                  <button className="btn small" onClick={() => {
+                    if (window.confirm("Revenir à la configuration par défaut ? La configuration actuelle sera remplacée.")) {
+                      window.location.href = "index.html"; // recharge l'app sans ?config= -> défauts appliqués
+                    }
+                  }}>Choisir</button>
+                </div>
+              </li>
+              {modeles.map((m) => (
+                <li key={m.id} className="config-row">
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    {m.visuel && (
+                      <img src={m.visuel} alt="" style={{ width: 168, height: 126, objectFit: "cover", borderRadius: 6, border: "1px solid var(--border, #e7e5e4)", flexShrink: 0 }} />
+                    )}
+                    <div>
+                      <strong>{m.nom}</strong>
+                      {m.description && <span className="config-date" style={{ display: "block" }}>{m.description}</span>}
+                      <span className="config-date">modifié le {m.updated}{m.by ? ` — ${m.by}` : ""}</span>
+                    </div>
+                  </div>
+                  <div className="config-actions">
+                    <button className="btn small" onClick={async () => {
+                      if (!window.confirm(`Repartir du modèle « ${m.nom} » ? La configuration actuelle sera remplacée.`)) return;
+                      try {
+                        const g = await postConfigs({ action: "apply_modele", id: m.id });
+                        if (g.ok && g.configuration) {
+                          setD(mergeConfig(g.configuration.config)); // copie du modèle dans les configs du compte
+                          setTabGen("module");
+                          setModelesOpen(false);
+                          notifier("Modèle appliqué ✓");
+                          await refreshConfigs();
+                        } else {
+                          notifier(g.error || "Modèle introuvable");
+                        }
+                      } catch { notifier("Modèle introuvable"); }
+                    }}>Choisir</button>
+                  </div>
+                </li>
+              ))}
+              {modeles.length === 0 && (
+                <li className="config-row"><span className="config-hint">Aucun modèle enregistré pour le moment.</span></li>
+              )}
+            </ul>
+          </div>
+        </div>
+      </div>
+      , document.body)}
       {soumettreOpen && createPortal(
       <div className="modal-overlay center" onClick={() => setSoumettreOpen(false)}>
         <div className="card modal" style={{ position: "fixed", margin: 0, left: soumPos?.x ?? 8, top: soumPos?.y ?? 8 }} onClick={(e) => e.stopPropagation()}>
@@ -2652,7 +2805,7 @@ export default function App() {
       , document.body)}
       {sauvOpen && createPortal(
       <div className="modal-overlay center" onClick={() => setSauvOpen(false)}>
-        <div className="card modal" style={{ position: "fixed", margin: 0, left: sauvPos?.x ?? 8, top: sauvPos?.y ?? 8 }} onClick={(e) => e.stopPropagation()}>
+        <div className="card modal modal-lg" style={{ position: "fixed", margin: 0, left: sauvPos?.x ?? 8, top: sauvPos?.y ?? 8 }} onClick={(e) => e.stopPropagation()}>
           <div className="card-title modal-title" onPointerDown={startCenterDrag(setSauvPos)} style={{ cursor: "grab", touchAction: "none" }}>
             <span>Sauvegardes</span>
             <button type="button" className="icon-btn danger" onClick={() => setSauvOpen(false)} title="Fermer" aria-label="Fermer">
@@ -2664,8 +2817,8 @@ export default function App() {
               <div className="account-box">
                 <div className="account-head">
                   <strong>Mes configurations</strong>
-                  <span className="account-user" title="Login de connexion">
-                    {session.user.email}
+                  <span className="account-user" title={session.admin ? "Compte administrateur du back-office" : "Login de connexion"}>
+                    {session.admin ? `admin — ${session.user.nom}` : session.user.email}
                   </span>
                 </div>
                 <div className="save-row">
@@ -2677,14 +2830,36 @@ export default function App() {
                   />
                   <button className="btn small" onClick={enregistrer}>Enregistrer cette configuration</button>
                 </div>
+                {session?.admin && (
+                  <label className="config-hint" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, cursor: "pointer" }}>
+                    <input type="checkbox" checked={saveModele} onChange={(e) => setSaveModele(e.target.checked)} />
+                    Enregistrer en tant que modèle (proposé aux nouveaux clients à la création de leur compte, listé dans le back-office « Modèles »)
+                  </label>
+                )}
+                <textarea
+                  placeholder={saveModele && session?.admin ? "Description du modèle (visible par les clients lors du choix du modèle)" : "Description de cette configuration (facultative)"}
+                  value={saveDesc}
+                  onChange={(e) => setSaveDesc(e.target.value)}
+                  rows={2}
+                  style={{ width: "100%", marginTop: 8, resize: "vertical" }}
+                />
+                <p className="config-hint" style={{ marginTop: 4 }}>
+                  Une copie PNG du plan actuel sera jointe comme visuel à la sauvegarde.
+                </p>
                 {configMsg && <div className="field-error" style={{ color: "#059669" }}>{configMsg}</div>}
                 {configs.length > 0 ? (
                   <ul className="config-list">
                     {configs.map((c) => (
                       <li key={c.id} className="config-row">
-                        <div>
-                          <strong>{c.nom}</strong>
-                          <span className="config-date">modifiée le {c.updated}</span>
+                        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                          {c.visuel && (
+                            <img src={c.visuel} alt="" style={{ width: 168, height: 126, objectFit: "cover", borderRadius: 6, border: "1px solid var(--border, #e7e5e4)", flexShrink: 0 }} />
+                          )}
+                          <div>
+                            <strong>{c.nom}</strong>
+                            {c.description && <span className="config-date" style={{ display: "block" }}>{c.description}</span>}
+                            <span className="config-date">modifiée le {c.updated}</span>
+                          </div>
                         </div>
                         <div className="config-actions">
                           <button className="btn small" onClick={() => chargerConfig(c.id)}>Charger</button>
@@ -2739,7 +2914,7 @@ export default function App() {
             </div>
             <Rosace size={72} />
           </div>
-          <div className="panel-canvas" style={{ height: panels.plan.h }}>
+          <div className="panel-canvas" style={{ height: panels.plan.h }} ref={(el) => { planSvgRef.current = el ? el.querySelector("svg") : null; }}>
             <Plan d={d} murs={env.murs} charpente={charpenteSel} toitType={toitType} selectedFace={selectedFace} planSel={planSel} selInst={d.selInst}
             w={effW("plan")} h={panels.plan.h} zoom={zoom}
             cumul={{ longueur: spanXm(d, env), largeur: spanYm(d, env), plancher: surfacePlancher(d, env) }}

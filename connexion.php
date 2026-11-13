@@ -5,24 +5,24 @@
  */
 require_once __DIR__ . '/includes/auth.php';
 
-// Déjà connecté : direction le configurateur
-if (archicad_is_logged_in()) {
+// Déjà connecté (compte client ou session administrateur) : direction le configurateur
+if (archicad_can_use_configurateur()) {
     header('Location: configurateur.php');
     exit;
 }
 
 $loginError = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['email'], $_POST['password'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['identifier'], $_POST['password'])) {
     if (archicad_rate_limit_is_blocked()) {
         $minutes = (int) ceil(archicad_rate_limit_blocked_seconds() / 60);
         $loginError = 'Trop de tentatives de connexion. Réessayez dans ' . $minutes . ' min.';
-    } elseif (archicad_login((string) $_POST['email'], (string) $_POST['password'])) {
+    } elseif (archicad_login((string) $_POST['identifier'], (string) $_POST['password'])) {
         archicad_rate_limit_success();
         header('Location: configurateur.php');
         exit;
     } else {
         archicad_rate_limit_failure();
-        $loginError = 'Email ou mot de passe incorrect.';
+        $loginError = 'Identifiant ou mot de passe incorrect.';
     }
 }
 
@@ -36,7 +36,9 @@ include 'includes/head.html';
       <div class="auth-card auth-card-narrow">
         <span class="section-tag">Espace client</span>
         <h1>Connexion</h1>
-        <p>Connectez-vous avec votre email et votre mot de passe pour accéder au configurateur.</p>
+        <p>Connectez-vous avec votre email et votre mot de passe pour accéder au configurateur.
+        Les administrateurs du back-office peuvent se connecter ici avec leur identifiant admin :
+        ils basculent directement dans le configurateur (et restent connectés au back-office).</p>
 
         <?php if ($loginError !== ''): ?>
           <div class="alert alert-error"><?= htmlspecialchars($loginError) ?></div>
@@ -44,8 +46,8 @@ include 'includes/head.html';
 
         <form method="post" action="connexion.php" class="auth-form">
           <div class="form-group">
-            <label for="email">Email</label>
-            <input type="email" id="email" name="email" required autofocus autocomplete="username">
+            <label for="identifier">Email ou identifiant administrateur</label>
+            <input type="text" id="identifier" name="identifier" required autofocus autocomplete="username">
           </div>
           <div class="form-group">
             <label for="password">Mot de passe</label>

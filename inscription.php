@@ -63,9 +63,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($user === false) {
             $errors[] = 'Impossible de créer le compte. Veuillez réessayer.';
         } else {
-            // Connexion immédiate après inscription
+            // Connexion immédiate après inscription, puis page intermédiaire :
+            // choix entre la configuration par défaut et un modèle (modele.php)
             archicad_login($old['email'], $password);
-            header('Location: configurateur.php');
+            header('Location: modele.php');
             exit;
         }
     }
